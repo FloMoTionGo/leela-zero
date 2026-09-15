@@ -69,15 +69,15 @@ void CPUPipe::winograd_transform_in(const std::vector<float>& in,
 
     constexpr auto Wpad = 2 + WINOGRAD_M * WTILES;
 
-    constexpr auto buffersize = 32;
-
     std::array<std::array<float, Wpad>, Wpad> in_pad{{{0.0f}}};
 
-    std::array<float, buffersize * WINOGRAD_ALPHA * WINOGRAD_ALPHA> buffer;
-    auto buffer_offset = 0;
-    auto buffer_entries = 0;
+    // Every tile's 6x6 patch, stored as one row per (row, column) position so
+    // the transforms below loop across all tiles at once and vectorize.
+    using TileRow = std::array<float, P>;
+    std::array<std::array<TileRow, WINOGRAD_ALPHA>, WINOGRAD_ALPHA> patch;
+    std::array<std::array<TileRow, WINOGRAD_ALPHA>, WINOGRAD_ALPHA> t1;
 
-    // multiple vector [i0..i5] by Bt and produce [o0..o5]
+    // multiply vector [i0..i5] by Bt and produce [o0..o5]
     // const auto Bt = std::array<float, WINOGRAD_TILE>{
     //     1.0f,  0.0f,       -5.0f / 2.0f,  0.0f,        1.0f, 0.0f,
     //     0.0f, -SQ2,        -2.0f,         SQ2 / 2.0f,  1.0f, 0.0f,
@@ -85,25 +85,30 @@ void CPUPipe::winograd_transform_in(const std::vector<float>& in,
     //     0.0f, -SQ2 / 2.0f, -1.0f / 2.0f,  SQ2,         1.0f, 0.0f,
     //     0.0f,  SQ2 / 2.0f, -1.0f / 2.0f, -SQ2,         1.0f, 0.0f,
     //     0.0f,  1.0f,        0.0f,        -5.0f / 2.0f, 0.0f, 1.0f};
-    const auto multiply_bt = [](float& o0, float& o1, float& o2,
-                                float& o3, float& o4, float& o5,
-                                const float i0, const float i1, const float i2,
-                                const float i3, const float i4, const float i5) {
-        auto i3m1 = i1 * -SQ2 + i3 * (SQ2 / 2.0f);
-        auto i4m2 = i2 * -2.0f + i4 * 1.0f;
+    const auto multiply_bt =
+        [](float* const __restrict o0, float* const __restrict o1,
+           float* const __restrict o2, float* const __restrict o3,
+           float* const __restrict o4, float* const __restrict o5,
+           const float* const i0, const float* const i1,
+           const float* const i2, const float* const i3,
+           const float* const i4, const float* const i5) {
+            for (auto t = 0; t < P; t++) {
+                const auto i3m1 = i1[t] * -SQ2 + i3[t] * (SQ2 / 2.0f);
+                const auto i4m2 = i2[t] * -2.0f + i4[t] * 1.0f;
 
-        o0 = i0 + i2 * (-5.0f / 2.0f) + i4;
-        o1 = i3m1 + i4m2;
-        o2 = -i3m1 + i4m2;
+                o0[t] = i0[t] + i2[t] * (-5.0f / 2.0f) + i4[t];
+                o1[t] = i3m1 + i4m2;
+                o2[t] = -i3m1 + i4m2;
 
-        auto i3m1_2 = i3 * (SQ2) + i1 * (-SQ2 / 2.0f);
-        auto i4m2_2 = i2 * (-1.0f / 2.0f) + i4;
+                const auto i3m1_2 = i3[t] * (SQ2) + i1[t] * (-SQ2 / 2.0f);
+                const auto i4m2_2 = i2[t] * (-1.0f / 2.0f) + i4[t];
 
-        o3 = i3m1_2 + i4m2_2;
-        o4 = -i3m1_2 + i4m2_2;
+                o3[t] = i3m1_2 + i4m2_2;
+                o4[t] = -i3m1_2 + i4m2_2;
 
-        o5 = i1 + i3 * (-5.0f / 2.0f) + i5;
-    };
+                o5[t] = i1[t] + i3[t] * (-5.0f / 2.0f) + i5[t];
+            }
+        };
 
     for (auto ch = 0; ch < C; ch++) {
         for (auto yin = 0; yin < H; yin++) {
@@ -111,73 +116,36 @@ void CPUPipe::winograd_transform_in(const std::vector<float>& in,
                 in_pad[yin + 1][xin + 1] = in[ch * (W * H) + yin * W + xin];
             }
         }
-        for (auto block_y = 0; block_y < WTILES; block_y++) {
-            // Tiles overlap by 2
-            const auto yin = WINOGRAD_M * block_y;
-            for (auto block_x = 0; block_x < WTILES; block_x++) {
-                const auto xin = WINOGRAD_M * block_x;
-#define DECL_T1(XX)                                                            \
-    float T1_##XX##_0, T1_##XX##_1, T1_##XX##_2, T1_##XX##_3, T1_##XX##_4,     \
-        T1_##XX##_5;
-                DECL_T1(0)
-                DECL_T1(1)
-                DECL_T1(2)
-                DECL_T1(3)
-                DECL_T1(4)
-                DECL_T1(5)
-
-                // Calculates transpose(B).x.B
-#define MULTIPLY_BT(XX)                                                        \
-    multiply_bt(T1_0_##XX, T1_1_##XX, T1_2_##XX, T1_3_##XX, T1_4_##XX,         \
-                T1_5_##XX,                                                     \
-                in_pad[yin + 0][xin + XX],                                     \
-                in_pad[yin + 1][xin + XX],                                     \
-                in_pad[yin + 2][xin + XX],                                     \
-                in_pad[yin + 3][xin + XX],                                     \
-                in_pad[yin + 4][xin + XX],                                     \
-                in_pad[yin + 5][xin + XX]);
-                MULTIPLY_BT(0)
-                MULTIPLY_BT(1)
-                MULTIPLY_BT(2)
-                MULTIPLY_BT(3)
-                MULTIPLY_BT(4)
-                MULTIPLY_BT(5)
-
-#define MULTIPLY_B(XX)                                                         \
-    multiply_bt(                                                               \
-        buffer[buffersize * (XX * WINOGRAD_ALPHA + 0) + buffer_entries],       \
-        buffer[buffersize * (XX * WINOGRAD_ALPHA + 1) + buffer_entries],       \
-        buffer[buffersize * (XX * WINOGRAD_ALPHA + 2) + buffer_entries],       \
-        buffer[buffersize * (XX * WINOGRAD_ALPHA + 3) + buffer_entries],       \
-        buffer[buffersize * (XX * WINOGRAD_ALPHA + 4) + buffer_entries],       \
-        buffer[buffersize * (XX * WINOGRAD_ALPHA + 5) + buffer_entries],       \
-        T1_##XX##_0, T1_##XX##_1, T1_##XX##_2, T1_##XX##_3, T1_##XX##_4,       \
-        T1_##XX##_5);
-                MULTIPLY_B(0)
-                MULTIPLY_B(1)
-                MULTIPLY_B(2)
-                MULTIPLY_B(3)
-                MULTIPLY_B(4)
-                MULTIPLY_B(5)
-
-                if (buffer_entries == 0) {
-                    buffer_offset = ch * P + block_y * WTILES + block_x;
-                }
-                buffer_entries++;
-
-                if (buffer_entries >= buffersize
-                    || (ch == C - 1 && block_x == WTILES - 1
-                        && block_y == WTILES - 1)) {
-
-                    for (auto i = 0; i < WINOGRAD_ALPHA * WINOGRAD_ALPHA; i++) {
-                        for (auto entry = 0; entry < buffer_entries; entry++) {
-                            V[i * C * P + buffer_offset + entry] =
-                                buffer[i * buffersize + entry];
-                        }
+        // Tiles overlap by 2
+        for (auto r = 0; r < WINOGRAD_ALPHA; r++) {
+            for (auto c = 0; c < WINOGRAD_ALPHA; c++) {
+                auto& dst = patch[r][c];
+                for (auto block_y = 0; block_y < WTILES; block_y++) {
+                    const auto& src = in_pad[WINOGRAD_M * block_y + r];
+                    for (auto block_x = 0; block_x < WTILES; block_x++) {
+                        dst[block_y * WTILES + block_x] =
+                            src[WINOGRAD_M * block_x + c];
                     }
-                    buffer_entries = 0;
                 }
             }
+        }
+
+        // Calculates transpose(B).x.B: first down each column of the patch...
+        for (auto c = 0; c < WINOGRAD_ALPHA; c++) {
+            multiply_bt(t1[0][c].data(), t1[1][c].data(), t1[2][c].data(),
+                        t1[3][c].data(), t1[4][c].data(), t1[5][c].data(),
+                        patch[0][c].data(), patch[1][c].data(),
+                        patch[2][c].data(), patch[3][c].data(),
+                        patch[4][c].data(), patch[5][c].data());
+        }
+        // ...then along each row, straight into V.
+        for (auto r = 0; r < WINOGRAD_ALPHA; r++) {
+            const auto out = [&](const int j) {
+                return &V[(r * WINOGRAD_ALPHA + j) * C * P + ch * P];
+            };
+            multiply_bt(out(0), out(1), out(2), out(3), out(4), out(5),
+                        t1[r][0].data(), t1[r][1].data(), t1[r][2].data(),
+                        t1[r][3].data(), t1[r][4].data(), t1[r][5].data());
         }
     }
 }
@@ -222,59 +190,59 @@ void CPUPipe::winograd_transform_out(const std::vector<float>& M,
     //     0.0f, SQ2 / 2.0f, -SQ2 / 2.0f,  SQ2,        -SQ2,        0.0f,
     //     0.0f, 1.0f / 2.0f, 1.0f / 2.0f, 2.0f,        2.0f,       0.0f,
     //     0.0f, SQ2 / 4.0f, -SQ2 / 4.0f,  2.0f * SQ2, -2.0f * SQ2, 1.0f};
-    const auto multiply_at = [](float& o0, float& o1, float& o2, float& o3,
-                                const float i0, const float i1,
-                                const float i2, const float i3,
-                                const float i4, const float i5) {
-        auto t1p2 = (i1 + i2) * (1.0f / 2.0f);
-        auto t1m2 = (i1 - i2) * (SQ2 / 4.0f);
-        auto t3p4 = i3 + i4;
-        auto t3m4 = (i3 - i4) * (SQ2);
+    // Applied to all tiles at once, one row of tiles per matrix entry.
+    const auto multiply_at =
+        [](float* const __restrict o0, float* const __restrict o1,
+           float* const __restrict o2, float* const __restrict o3,
+           const float* const i0, const float* const i1,
+           const float* const i2, const float* const i3,
+           const float* const i4, const float* const i5) {
+            for (auto t = 0; t < P; t++) {
+                const auto t1p2 = (i1[t] + i2[t]) * (1.0f / 2.0f);
+                const auto t1m2 = (i1[t] - i2[t]) * (SQ2 / 4.0f);
+                const auto t3p4 = i3[t] + i4[t];
+                const auto t3m4 = (i3[t] - i4[t]) * (SQ2);
 
-        o0 = i0 + t1p2 + t1p2 + t3p4;
-        o1 = t1m2 + t1m2 + t3m4;
-        o2 = t1p2 + t3p4 + t3p4;
-        o3 = t1m2 + t3m4 + t3m4 + i5;
-    };
+                o0[t] = i0[t] + t1p2 + t1p2 + t3p4;
+                o1[t] = t1m2 + t1m2 + t3m4;
+                o2[t] = t1p2 + t3p4 + t3p4;
+                o3[t] = t1m2 + t3m4 + t3m4 + i5[t];
+            }
+        };
+
+    using TileRow = std::array<float, P>;
+    std::array<std::array<TileRow, WINOGRAD_ALPHA>, WINOGRAD_M> temp;
+    std::array<std::array<TileRow, WINOGRAD_M>, WINOGRAD_M> o;
 
     for (auto k = 0; k < K; k++) {
-        for (auto block_x = 0; block_x < WTILES; block_x++) {
-            const auto x = WINOGRAD_M * block_x;
-            for (auto block_y = 0; block_y < WTILES; block_y++) {
-                const auto y = WINOGRAD_M * block_y;
+        // Calculates transpose(A).temp_m.A: first down each column of M...
+        for (auto nu = 0; nu < WINOGRAD_ALPHA; nu++) {
+            const auto m = [&](const int xi) {
+                return &M[(xi * WINOGRAD_ALPHA + nu) * K * P + k * P];
+            };
+            multiply_at(temp[0][nu].data(), temp[1][nu].data(),
+                        temp[2][nu].data(), temp[3][nu].data(),
+                        m(0), m(1), m(2), m(3), m(4), m(5));
+        }
+        // ...then along each row.
+        for (auto i = 0; i < WINOGRAD_M; i++) {
+            multiply_at(o[i][0].data(), o[i][1].data(), o[i][2].data(),
+                        o[i][3].data(),
+                        temp[i][0].data(), temp[i][1].data(),
+                        temp[i][2].data(), temp[i][3].data(),
+                        temp[i][4].data(), temp[i][5].data());
+        }
 
+        for (auto block_y = 0; block_y < WTILES; block_y++) {
+            const auto y = WINOGRAD_M * block_y;
+            for (auto block_x = 0; block_x < WTILES; block_x++) {
+                const auto x = WINOGRAD_M * block_x;
                 const auto b = block_y * WTILES + block_x;
-                using WinogradTile =
-                    std::array<std::array<float, WINOGRAD_ALPHA>,
-                               WINOGRAD_ALPHA>;
-                WinogradTile temp_m;
-                for (auto xi = 0; xi < WINOGRAD_ALPHA; xi++) {
-                    for (auto nu = 0; nu < WINOGRAD_ALPHA; nu++) {
-                        temp_m[xi][nu] =
-                            M[(xi * WINOGRAD_ALPHA + nu) * K * P + k * P + b];
-                    }
-                }
-                std::array<std::array<float, WINOGRAD_ALPHA>, WINOGRAD_M> temp;
-                std::array<std::array<float, WINOGRAD_M>, WINOGRAD_M> o;
-
-                // Calculates transpose(A).temp_m.A
-                for (auto j = 0; j < WINOGRAD_ALPHA; j++) {
-                    multiply_at(temp[0][j], temp[1][j], temp[2][j], temp[3][j],
-                                temp_m[0][j], temp_m[1][j], temp_m[2][j],
-                                temp_m[3][j], temp_m[4][j], temp_m[5][j]);
-                }
-
-                for (auto i = 0; i < WINOGRAD_M; i++) {
-                    multiply_at(o[i][0], o[i][1], o[i][2], o[i][3],
-                                temp[i][0], temp[i][1], temp[i][2],
-                                temp[i][3], temp[i][4], temp[i][5]);
-                }
-
                 const auto y_ind = k * H * W + y * W + x;
                 for (auto i = 0; i < WINOGRAD_M; i++) {
                     for (auto j = 0; j < WINOGRAD_M; j++) {
                         if (y + i < H && x + j < W) {
-                            Y[y_ind + i * W + j] = o[i][j];
+                            Y[y_ind + i * W + j] = o[i][j][b];
                         }
                     }
                 }
@@ -313,8 +281,14 @@ void convolve(const size_t outputs,
     const auto filter_dim = filter_len * input_channels;
     assert(outputs * num_intersections == output.size());
 
-    std::vector<float> col(filter_dim * width * height);
-    im2col<filter_size>(input_channels, input, col);
+    // For a 1x1 filter the column buffer would be a plain copy of the input.
+    std::vector<float> col;
+    auto col_data = input.data();
+    if (filter_size != 1) {
+        col.resize(filter_dim * width * height);
+        im2col<filter_size>(input_channels, input, col);
+        col_data = col.data();
+    }
 
     // Weight shape (output, input, filter_size, filter_size)
     // 96 18 3 3
@@ -332,13 +306,13 @@ void convolve(const size_t outputs,
                 // M        N            K
                 outputs, num_intersections, filter_dim,
                 1.0f, &weights[0], filter_dim,
-                &col[0], num_intersections,
+                col_data, num_intersections,
                 0.0f, &output[0], num_intersections);
 #else
     auto C_mat =
         EigenMatrixMap<float>(output.data(), num_intersections, outputs);
     C_mat.noalias() =
-        ConstEigenMatrixMap<float>(col.data(), num_intersections, filter_dim)
+        ConstEigenMatrixMap<float>(col_data, num_intersections, filter_dim)
         * ConstEigenMatrixMap<float>(weights.data(), filter_dim, outputs);
 #endif
 
@@ -389,10 +363,15 @@ void CPUPipe::forward(const std::vector<float>& input,
     const auto input_channels =
         std::max(static_cast<size_t>(output_channels),
                  static_cast<size_t>(Network::INPUT_CHANNELS));
-    auto conv_out = std::vector<float>(output_channels * NUM_INTERSECTIONS);
-
-    auto V = std::vector<float>(WINOGRAD_TILE * input_channels * P);
-    auto M = std::vector<float>(WINOGRAD_TILE * output_channels * P);
+    // Scratch buffers are reused per thread (several search threads share this
+    // pipe). Every element is written before it is read, so they need no
+    // clearing; allocating them per evaluation cost heap and page-fault time.
+    thread_local std::vector<float> conv_out, conv_in, res, V, M;
+    conv_out.resize(output_channels * NUM_INTERSECTIONS);
+    conv_in.resize(output_channels * NUM_INTERSECTIONS);
+    res.resize(output_channels * NUM_INTERSECTIONS);
+    V.resize(WINOGRAD_TILE * input_channels * P);
+    M.resize(WINOGRAD_TILE * output_channels * P);
 
     winograd_convolve3(output_channels, input, m_weights->m_conv_weights[0], V,
                        M, conv_out);
@@ -401,8 +380,6 @@ void CPUPipe::forward(const std::vector<float>& input,
                                  m_weights->m_batchnorm_stddevs[0].data());
 
     // Residual tower
-    auto conv_in = std::vector<float>(output_channels * NUM_INTERSECTIONS);
-    auto res = std::vector<float>(output_channels * NUM_INTERSECTIONS);
     for (auto i = size_t{1}; i < m_weights->m_conv_weights.size(); i += 2) {
         auto output_channels = m_input_channels;
         std::swap(conv_out, conv_in);
