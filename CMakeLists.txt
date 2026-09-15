@@ -76,7 +76,9 @@ if(GccSpecificFlags)
   else()
     set(LTO_FLAG "-flto")
   endif()
-  set(GCC_COMPILE_FLAGS "-Wall -Wextra -ffast-math ${LTO_FLAG} -march=native")
+  # Use e.g. -DLEELAZ_MARCH=x86-64-v3 for a binary that runs on other machines.
+  set(LEELAZ_MARCH "native" CACHE STRING "Target CPU passed to -march")
+  set(GCC_COMPILE_FLAGS "-Wall -Wextra -ffast-math ${LTO_FLAG} -march=${LEELAZ_MARCH}")
   set(GCC_DISABLED_WARNING_COMPILE_FLAGS "-Wno-ignored-attributes -Wno-maybe-uninitialized \
       -Wno-mismatched-tags")
   set(GCC_FLAGS "${GCC_COMPILE_FLAGS} ${GCC_DISABLED_WARNING_COMPILE_FLAGS}")
