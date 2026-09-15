@@ -43,11 +43,13 @@ The exe looks for engines next to itself:
 leelaz-gui.exe
 WebView2Loader.dll
 ui/
-engines/katago/   katago.exe + DLLs, gtp_cpu.cfg, b18c384nbt.bin.gz
+engines/katago/   katago.exe (OpenCL build) + DLLs, gtp_opencl.cfg, tf2-b10c384.bin.gz,
+                  KataGoData/opencltuning/ (optional; tuned on first start otherwise)
 engines/leelaz/   leelaz.exe + DLLs, best-network (40x256), networks/leelaz-6b-fast.gz
 ```
 
 Target PCs need the Microsoft Edge WebView2 Runtime (included with Windows 11).
+KataGo and the 40-block Leela Zero network need an OpenCL GPU; "Leela Zero (CPU)" runs without one.
 Settings are stored in `%LOCALAPPDATA%\LeelaZeroGUI\settings.json`.
 
 ## Tests

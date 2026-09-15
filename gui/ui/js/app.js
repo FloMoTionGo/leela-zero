@@ -10,10 +10,12 @@
   const PROFILES = {
     katago: {
       name: "KataGo", sizes: [9, 13, 19], dir: "katago", protocol: "katago",
-      network: "kata1-b18c384nbt", backend: "CPU · Eigen AVX2",
-      // Analysis ignores maxVisits; it only limits genmove.
-      cmd: (dir, s) => `"${dir}\\katago.exe" gtp -model b18c384nbt.bin.gz -config gtp_cpu.cfg -override-config ` +
-        `numSearchThreads=${s.threads},reportAnalysisWinratesAs=SIDETOMOVE,ponderingEnabled=false,maxVisits=${s.visits}`,
+      network: "kata1-tf2-b10c384", backend: "GPU · OpenCL",
+      // Analysis ignores maxVisits; it only limits genmove. A max batch of half the
+      // search threads measured fastest on an RTX A2000 (KataGo benchmark).
+      cmd: (dir, s) => `"${dir}\\katago.exe" gtp -model tf2-b10c384.bin.gz -config gtp_opencl.cfg -override-config ` +
+        `numSearchThreads=${s.threads},nnMaxBatchSize=${Math.ceil(s.threads / 2)},` +
+        `reportAnalysisWinratesAs=SIDETOMOVE,ponderingEnabled=false,maxVisits=${s.visits}`,
       analyze: "kata-analyze interval 25 ownership true",
       beforeGenmove: (s) => `kata-set-param maxVisits ${s.visits}`,
       afterGenmove: null,
