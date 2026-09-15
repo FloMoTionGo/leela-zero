@@ -49,7 +49,7 @@ message(STATUS "Using built-in matrix library.")
 endif()
 find_package(Qt5Core)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED on)
 
 # See if we can set optimization flags as expected.
@@ -70,13 +70,19 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 endif(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 
 if(GccSpecificFlags)
-  set(GCC_COMPILE_FLAGS "-Wall -Wextra -ffast-math -flto -march=native")
+  # MinGW's linker drops COMDAT thunks from Boost exceptions under LTO.
+  if(MINGW)
+    set(LTO_FLAG "")
+  else()
+    set(LTO_FLAG "-flto")
+  endif()
+  set(GCC_COMPILE_FLAGS "-Wall -Wextra -ffast-math ${LTO_FLAG} -march=native")
   set(GCC_DISABLED_WARNING_COMPILE_FLAGS "-Wno-ignored-attributes -Wno-maybe-uninitialized \
       -Wno-mismatched-tags")
   set(GCC_FLAGS "${GCC_COMPILE_FLAGS} ${GCC_DISABLED_WARNING_COMPILE_FLAGS}")
   set(CMAKE_CXX_FLAGS_DEBUG "${GCC_FLAGS} -g -Og")
   set(CMAKE_CXX_FLAGS_RELEASE "${GCC_FLAGS} -g -O3 -DNDEBUG")
-  set(CMAKE_EXE_LINKER_FLAGS "-flto -g")
+  set(CMAKE_EXE_LINKER_FLAGS "${LTO_FLAG} -g")
 endif(GccSpecificFlags)
 
 if(USE_CPU_ONLY)
