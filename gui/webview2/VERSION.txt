@@ -1,0 +1,1 @@
+Microsoft.Web.WebView2 1.0.4191.47 (nuget.org): include/ headers, x64 WebView2Loader.dll and its MSVC import library

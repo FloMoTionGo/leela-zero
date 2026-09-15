@@ -151,6 +151,13 @@ target_link_libraries(tests ${OpenCL_LIBRARIES})
 target_link_libraries(tests ${ZLIB_LIBRARIES})
 target_link_libraries(tests gtest_main ${CMAKE_THREAD_LIBS_INIT})
 
+if(WIN32)
+    option(BUILD_GUI "Build the Windows desktop GUI (leelaz-gui, needs the WebView2 runtime)" ON)
+    if(BUILD_GUI)
+        add_subdirectory(gui)
+    endif()
+endif()
+
 include(GetGitRevisionDescription)
 git_describe(VERSION --tags)
 string(REGEX REPLACE "^v([0-9]+)\\..*" "\\1" MAJOR_VERSION "${VERSION}")
