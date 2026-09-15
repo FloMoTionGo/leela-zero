@@ -18,6 +18,7 @@
 #include <commdlg.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <dwmapi.h>
 
 #include <algorithm>
 #include <fstream>
@@ -71,6 +72,7 @@ std::wstring g_selftest_png;
 std::wstring g_selftest_scenario;  // optional name after the PNG path
 int g_selftest_css_w = 1920;       // optional "WxH" page size in CSS pixels after the scenario
 int g_selftest_css_h = 1080;
+bool g_dark = false;               // the page's light/dark scheme
 
 // ---------------- strings ----------------
 std::wstring widen(const std::string& s) {
@@ -315,6 +317,27 @@ void capture_and_exit(int exit_code) {
             }));
 }
 
+// Title bar, window background and the WebView's backdrop follow the page's
+// scheme, so loading or resizing never flashes the other colour.
+void apply_theme(bool dark) {
+    g_dark = dark;
+    BOOL on = dark;
+    DwmSetWindowAttribute(g_window, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &on, sizeof on);
+    const COLORREF ground = dark ? RGB(0x2a, 0x28, 0x22) : RGB(0xef, 0xeb, 0xe4);
+    const auto old = reinterpret_cast<HBRUSH>(
+        SetClassLongPtrW(g_window, GCLP_HBRBACKGROUND, reinterpret_cast<LONG_PTR>(CreateSolidBrush(ground))));
+    if (old) DeleteObject(old);
+    if (g_controller) {
+        ICoreWebView2Controller2* controller2 = nullptr;
+        if (SUCCEEDED(g_controller->QueryInterface(IID_ICoreWebView2Controller2, reinterpret_cast<void**>(&controller2)))) {
+            COREWEBVIEW2_COLOR color{255, GetRValue(ground), GetGValue(ground), GetBValue(ground)};
+            controller2->put_DefaultBackgroundColor(color);
+            controller2->Release();
+        }
+    }
+    SetWindowPos(g_window, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+}
+
 void on_web_message(const std::wstring& msg) {
     const auto p = split_tabs(msg, 4);
     const auto& type = p[0];
@@ -338,6 +361,8 @@ void on_web_message(const std::wstring& msg) {
         save_sgf(parts[1], parts[2]);
     } else if (type == L"save-settings" && p.size() >= 2) {
         write_file(settings_path(), narrow(split_tabs(msg, 2)[1]));
+    } else if (type == L"theme" && p.size() >= 2) {
+        apply_theme(p[1] == L"dark");
     } else if (type == L"ready" && !g_selftest_png.empty()) {
         capture_and_exit(0);
     }
@@ -379,7 +404,8 @@ HRESULT on_controller(HRESULT hr, ICoreWebView2Controller* controller) {
             }),
         &token);
 
-    g_webview->Navigate(L"https://app.local/index.html");
+    apply_theme(g_dark);
+    g_webview->Navigate(g_dark ? L"https://app.local/index.html?scheme=dark" : L"https://app.local/index.html");
     return S_OK;
 }
 
@@ -467,6 +493,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     }
     LocalFree(argv);
 
+    // Start in the saved scheme (self tests always start light).
+    std::string saved_settings;
+    if (g_selftest_png.empty() && read_file(settings_path(), saved_settings)) {
+        g_dark = saved_settings.find("\"dark\":true") != std::string::npos;
+    }
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
@@ -476,7 +508,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     wc.lpszClassName = L"LeelaZeroGUI";
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIcon(instance, MAKEINTRESOURCE(1));
-    wc.hbrBackground = CreateSolidBrush(RGB(0xef, 0xeb, 0xe4));
+    wc.hbrBackground = CreateSolidBrush(g_dark ? RGB(0x2a, 0x28, 0x22) : RGB(0xef, 0xeb, 0xe4));
     RegisterClassW(&wc);
 
     // Sizes are in device pixels. The normal window fills most of the work
@@ -500,6 +532,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     const int y = work.top + std::max(0, (work_h - h) / 2);
     g_window = CreateWindowW(wc.lpszClassName, L"Leela Zero", WS_OVERLAPPEDWINDOW, x, y, w, h, nullptr,
                              nullptr, instance, nullptr);
+    apply_theme(g_dark);
     ShowWindow(g_window, show);
     if (!g_selftest_png.empty()) SetTimer(g_window, 1, 240000, nullptr);
 

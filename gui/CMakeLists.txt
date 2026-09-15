@@ -13,7 +13,7 @@ if(MINGW)
 else()
     set(WEBVIEW2_LOADER ${CMAKE_CURRENT_SOURCE_DIR}/webview2/WebView2Loader.dll.lib)
 endif()
-target_link_libraries(leelaz-gui PRIVATE ${WEBVIEW2_LOADER} ole32 shlwapi shell32 comdlg32 uuid)
+target_link_libraries(leelaz-gui PRIVATE ${WEBVIEW2_LOADER} ole32 shlwapi shell32 comdlg32 dwmapi uuid)
 
 add_custom_command(TARGET leelaz-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

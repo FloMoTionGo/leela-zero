@@ -1,3 +1,5 @@
+/* Two schemes as in GoSequencer: creamy paper or charcoal, never plain white
+   or plain black. The stones keep their colours in both. */
 :root {
   --ground: #efebe4;
   --panel: #fbf9f5;
@@ -5,12 +7,45 @@
   --muted: #716a60;
   --hair: #ddd6cb;
   --chip: #e6e0d6;
+  --field: #ffffff;
   --accent: #3c78c0;
+  --accent-ink: #173a63;       /* text on a pale accent tint */
+  --accent-contrast: #ffffff;  /* text on a solid accent fill */
   --warn: #b8663a;
   --shadow: 0 1px 2px rgba(40, 30, 15, 0.06), 0 8px 28px rgba(40, 30, 15, 0.10);
+  --board: #d9bb86;
+  --grid: #4a3a22;
+  --coord: rgba(74, 58, 34, 0.7);
+  --stone-black: #1f1d1b;
+  --stone-white: #f7f5ef;
+  --stone-black-edge: none;    /* black reads on a light board without an edge */
+  --stone-white-edge: #b9b2a4;
   --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   color-scheme: light;
+}
+
+:root[data-scheme="dark"] {
+  --ground: #2a2822;
+  --panel: #34302a;
+  --ink: #f2ecdd;
+  --muted: #ada387;
+  --hair: #4a4438;
+  --chip: #433e35;
+  --field: #2a2822;
+  --accent: #6c9fdb;           /* lighter on charcoal, like GoSequencer's accent */
+  --accent-ink: #e3edf9;
+  --accent-contrast: #10223a;
+  --warn: #e0754f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 8px 28px rgba(0, 0, 0, 0.30);
+  --board: #3b362e;            /* one step up from the ground */
+  --grid: #5c5544;
+  --coord: #756e5c;
+  --stone-black: #171512;      /* below the board so it still reads as a filled disc */
+  --stone-white: #faf6ee;
+  --stone-black-edge: #ada387;
+  --stone-white-edge: #756e5c;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -49,6 +84,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .status-pill.error .dot { background: var(--warn); }
 .icon-button { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--hair); border-radius: 6px; background: var(--panel); color: var(--muted); }
 .icon-button:hover, .chip-button:hover { color: var(--ink); border-color: var(--muted); }
+/* the light/dark switch shows the active scheme: a sun when light, a moon when dark */
+:root[data-scheme="dark"] #scheme-toggle .icon-sun,
+:root:not([data-scheme="dark"]) #scheme-toggle .icon-moon { display: none; }
 
 /* ---- columns and cards ---- */
 .column { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
@@ -114,7 +152,7 @@ dialog::backdrop { background: rgba(34, 31, 27, 0.25); }
 .settings-form { display: flex; flex-direction: column; gap: 14px; padding: 24px; width: 440px; }
 .settings-form h2 { margin: 0 0 4px; font-size: 18px; }
 .settings-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
-.settings-form select, .settings-form input { font: 14px var(--sans); color: var(--ink); height: 34px; padding: 0 8px; border: 1px solid var(--hair); border-radius: 6px; background: #fff; }
+.settings-form select, .settings-form input { font: 14px var(--sans); color: var(--ink); height: 34px; padding: 0 8px; border: 1px solid var(--hair); border-radius: 6px; background: var(--field); }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .toast { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px; background: var(--ink); color: var(--ground); font-size: 13px; box-shadow: var(--shadow); }
 

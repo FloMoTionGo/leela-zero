@@ -67,4 +67,13 @@ leelaz-gui.exe --selftest out.png                       # KataGo 19x19, 1920x108
 leelaz-gui.exe --selftest out.png kata9                 # KataGo 9x9 with territory
 leelaz-gui.exe --selftest out.png leelaz19 1100x640     # Leela Zero, smallest window
 leelaz-gui.exe --selftest out.png review19              # "Analyze game" over all moves
+leelaz-gui.exe --selftest out.png kata9-dark            # any scenario + "-dark" uses the dark scheme
 ```
+
+## Light and dark
+
+Like GoSequencer's editor, the window has two schemes — creamy paper or
+charcoal — switched by the sun/moon button at the top right (sun = light,
+moon = dark) and remembered in the settings. All colours are CSS custom properties in `ui/style.css` (`:root` and
+`[data-scheme="dark"]`); the board reads them too. The host follows the scheme
+for the title bar and window background.

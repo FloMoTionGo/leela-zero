@@ -6,7 +6,7 @@
 
   const $ = (id) => document.getElementById(id);
 
-  const DEFAULTS = { engine: "katago", komi: 7.5, human: 1, visits: 400, threads: 8 };
+  const DEFAULTS = { engine: "katago", komi: 7.5, human: 1, visits: 400, threads: 8, dark: false };
   const PROFILES = {
     katago: {
       name: "KataGo", sizes: [9, 13, 19], dir: "katago", protocol: "katago",
@@ -302,6 +302,23 @@
     };
   }
 
+  // Light (creamy) or dark (charcoal) scheme, as in GoSequencer: one switch in
+  // the header (sun or moon, see style.css), remembered in the settings.
+  function applyScheme(dark) {
+    document.documentElement.dataset.scheme = dark ? "dark" : "light";
+    const toggle = $("scheme-toggle");
+    toggle.setAttribute("aria-pressed", String(dark));
+    toggle.title = dark ? "Switch to light mode" : "Switch to dark mode";
+    send("theme", dark ? "dark" : "light");  // title bar and window background
+    scheduleRender();                         // the board reads its colours from the scheme
+  }
+
+  function toggleScheme() {
+    settings.dark = !settings.dark;
+    applyScheme(settings.dark);
+    send("save-settings", JSON.stringify(settings));
+  }
+
   function togglePause() {
     state.paused = !state.paused;
     if (state.paused) {
@@ -373,6 +390,7 @@
       human: parseInt($("set-human").value, 10),
       visits: Math.max(1, parseInt($("set-visits").value, 10) || DEFAULTS.visits),
       threads: Math.max(1, parseInt($("set-threads").value, 10) || DEFAULTS.threads),
+      dark: settings.dark,  // set by the Dark switch, not in this dialog
     };
     const restart = next.engine !== settings.engine || next.threads !== settings.threads;
     const komiChanged = next.komi !== state.komi;
@@ -432,11 +450,14 @@
           try { settings = { ...DEFAULTS, ...JSON.parse(m.settings) }; } catch (e) { /* keep defaults */ }
         }
         if (!PROFILES[settings.engine]) settings.engine = DEFAULTS.engine;  // settings from another version
-        if (m.selftest && m.scenario === "leelaz19") settings.engine = "leelaz";
+        let scenario = m.scenario || "";
+        if (m.selftest && scenario.endsWith("-dark")) { settings.dark = true; scenario = scenario.slice(0, -5); }
+        if (m.selftest && scenario === "leelaz19") settings.engine = "leelaz";
+        applyScheme(settings.dark);
         state.komi = settings.komi;
         newGame(19);
         startEngine();
-        if (m.selftest) runSelftest(m.scenario);
+        if (m.selftest) runSelftest(scenario);
         break;
       }
       case "started":
@@ -491,6 +512,7 @@
   $("review-game").addEventListener("click", toggleReview);
   $("territory-toggle").addEventListener("click", () => { state.showTerritory = !state.showTerritory; scheduleRender(); });
   $("analysis-toggle").addEventListener("click", togglePause);
+  $("scheme-toggle").addEventListener("click", toggleScheme);
   $("open-sgf").addEventListener("click", () => send("open-sgf"));
   $("save-sgf").addEventListener("click", saveSgf);
   $("open-settings").addEventListener("click", openSettings);
