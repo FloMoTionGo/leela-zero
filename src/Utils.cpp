@@ -99,17 +99,19 @@ bool Utils::input_pending() {
         }
     }
 
+    // A closed or invalid stdin reports as pending input, like select() does
+    // at EOF. The caller then stops its search threads and the GTP loop exits
+    // on EOF; calling exit() here would run static destructors while search
+    // threads are still using them.
     if (pipe) {
         if (!PeekNamedPipe(inh, nullptr, 0, nullptr, &dw, nullptr)) {
-            myprintf("Nothing at other end - exiting\n");
-            exit(EXIT_FAILURE);
+            return true;
         }
 
         return dw;
     } else {
         if (!GetNumberOfConsoleInputEvents(inh, &dw)) {
-            myprintf("Nothing at other end - exiting\n");
-            exit(EXIT_FAILURE);
+            return true;
         }
 
         return dw > 1;
