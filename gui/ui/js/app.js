@@ -6,7 +6,8 @@
 
   const $ = (id) => document.getElementById(id);
 
-  const DEFAULTS = { engine: "katago", komi: 7.5, human: 1, visits: 400, threads: 8, dark: false };
+  const DEFAULTS = { engine: "katago", komi: 7.5, human: 1, visits: 400, threads: 8, dark: false,
+                     hideLeft: false, hideRight: false };
   const PROFILES = {
     katago: {
       name: "KataGo", sizes: [9, 13, 19], dir: "katago", protocol: "katago",
@@ -42,7 +43,7 @@
   };
 
   const state = {
-    size: 19, komi: DEFAULTS.komi, tab: "analyze", setup: [],
+    size: 19, komi: DEFAULTS.komi, tab: "review", setup: [],
     engine: { kind: "katago", ready: false, version: "", network: "", backend: "", error: "" },
     nodes: [], index: 0, paused: false, thinking: false, speed: null,
     showTerritory: false, policy: null, hover: null, resignedAt: -1,
@@ -321,6 +322,24 @@
     send("save-settings", JSON.stringify(settings));
   }
 
+  // Side panels: hidden ones give the board their width, remembered in the settings.
+  function applyPanes() {
+    const app = $("app");
+    app.classList.toggle("hide-left", settings.hideLeft);
+    app.classList.toggle("hide-right", settings.hideRight);
+    for (const [id, hidden, side] of [["toggle-left", settings.hideLeft, "left"], ["toggle-right", settings.hideRight, "right"]]) {
+      $(id).setAttribute("aria-pressed", String(hidden));
+      $(id).title = `${hidden ? "Show" : "Hide"} the ${side} panel`;
+    }
+    scheduleRender();  // the board sizes itself to its new space
+  }
+
+  function togglePane(key) {
+    settings[key] = !settings[key];
+    applyPanes();
+    send("save-settings", JSON.stringify(settings));
+  }
+
   function togglePause() {
     state.paused = !state.paused;
     if (state.paused) {
@@ -393,6 +412,7 @@
       visits: Math.max(1, parseInt($("set-visits").value, 10) || DEFAULTS.visits),
       threads: Math.max(1, parseInt($("set-threads").value, 10) || DEFAULTS.threads),
       dark: settings.dark,  // set by the Dark switch, not in this dialog
+      hideLeft: settings.hideLeft, hideRight: settings.hideRight,  // set by the panel buttons
     };
     const restart = next.engine !== settings.engine || next.threads !== settings.threads;
     const komiChanged = next.komi !== state.komi;
@@ -456,6 +476,7 @@
         if (m.selftest && scenario.endsWith("-dark")) { settings.dark = true; scenario = scenario.slice(0, -5); }
         if (m.selftest && scenario === "leelaz19") settings.engine = "leelaz";
         applyScheme(settings.dark);
+        applyPanes();
         state.komi = settings.komi;
         newGame(19);
         startEngine();
@@ -512,11 +533,25 @@
   $("pass").addEventListener("click", () => tryPlay(null));
   $("engine-move").addEventListener("click", () => { wantEngineMove = true; requestSync(); });
   $("review-game").addEventListener("click", toggleReview);
+  $("toggle-left").addEventListener("click", () => togglePane("hideLeft"));
+  $("toggle-right").addEventListener("click", () => togglePane("hideRight"));
   $("territory-toggle").addEventListener("click", () => { state.showTerritory = !state.showTerritory; scheduleRender(); });
   $("analysis-toggle").addEventListener("click", togglePause);
   $("scheme-toggle").addEventListener("click", toggleScheme);
-  $("open-sgf").addEventListener("click", () => send("open-sgf"));
-  $("save-sgf").addEventListener("click", saveSgf);
+  // Open and save share one dropdown, opened from the merged folder/disk icon.
+  function closeSgfMenu() {
+    $("sgf-menu").hidden = true;
+    $("sgf-button").setAttribute("aria-expanded", "false");
+  }
+  $("sgf-button").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = $("sgf-menu").hidden;
+    $("sgf-menu").hidden = !open;
+    $("sgf-button").setAttribute("aria-expanded", String(open));
+  });
+  $("open-sgf").addEventListener("click", () => { closeSgfMenu(); send("open-sgf"); });
+  $("save-sgf").addEventListener("click", () => { closeSgfMenu(); saveSgf(); });
+  document.addEventListener("click", (e) => { if (!$("sgf-menu").hidden && !e.target.closest(".menu-anchor")) closeSgfMenu(); });
   $("open-settings").addEventListener("click", openSettings);
   $("settings").addEventListener("close", () => { if ($("settings").returnValue === "ok") applySettings(); });
   $("prev").addEventListener("click", () => goTo(state.index - 1));
@@ -524,6 +559,7 @@
   window.addEventListener("resize", scheduleRender);
   document.addEventListener("keydown", (e) => {
     if ($("settings").open) return;
+    if (e.key === "Escape" && !$("sgf-menu").hidden) { closeSgfMenu(); return; }
     if (e.key === "ArrowLeft") goTo(state.index - 1);
     else if (e.key === "ArrowRight") goTo(state.index + 1);
     else if (e.key === "Home") goTo(0);

@@ -60,12 +60,22 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 #app {
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(300px, 400px) 1fr minmax(300px, 400px);
+  --side: minmax(300px, 400px);
+  grid-template-columns: var(--side) 1fr var(--side);
   grid-template-rows: 64px 1fr 88px;
   grid-template-areas: "top top top" "left center right" "foot foot foot";
   gap: 16px 28px;
   padding: 0 28px 16px;
 }
+
+/* Side panels fold away (buttons at both ends of the board toolbar) so the
+   board can take the whole width. */
+#app.hide-left { grid-template-columns: 1fr var(--side); grid-template-areas: "top top" "center right" "foot foot"; }
+#app.hide-right { grid-template-columns: var(--side) 1fr; grid-template-areas: "top top" "left center" "foot foot"; }
+#app.hide-left.hide-right { grid-template-columns: 1fr; grid-template-areas: "top" "center" "foot"; }
+#app.hide-left .left, #app.hide-right .right { display: none; }
+.pane-fill { fill: currentColor; stroke: none; opacity: 0.35; }
+.icon-button[aria-pressed="true"] .pane-fill { opacity: 0; }  /* hollow = panel hidden */
 
 /* ---- top bar ---- */
 .topbar { grid-area: top; display: flex; align-items: center; gap: 28px; }
@@ -146,6 +156,12 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .scrubber { grid-area: foot; flex-direction: row; align-items: center; gap: 16px; padding: 8px 18px; }
 #winrate-graph { flex: 1; height: 72px; cursor: pointer; }
 
+/* ---- SGF open/save dropdown ---- */
+.menu-anchor { position: relative; }
+.menu { position: absolute; top: 38px; right: 0; z-index: 10; display: flex; flex-direction: column; min-width: 160px; padding: 6px; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; box-shadow: var(--shadow); }
+.menu button { height: 32px; padding: 0 10px; border-radius: 6px; text-align: left; font-size: 13px; white-space: nowrap; }
+.menu button:hover { background: var(--ground); }
+
 /* ---- dialog and toast ---- */
 dialog { border: 0; border-radius: 12px; padding: 0; box-shadow: var(--shadow); background: var(--panel); color: var(--ink); }
 dialog::backdrop { background: rgba(34, 31, 27, 0.25); }
@@ -168,7 +184,7 @@ dialog::backdrop { background: rgba(34, 31, 27, 0.25); }
 
 /* ---- compact layouts (smallest window: 1100x640 CSS px) ---- */
 @media (max-width: 1500px) {
-  #app { grid-template-columns: minmax(250px, 330px) 1fr minmax(250px, 330px); gap: 12px 18px; padding: 0 18px 12px; }
+  #app { --side: minmax(250px, 330px); gap: 12px 18px; padding: 0 18px 12px; }
   .topbar { gap: 18px; }
   .tabs { gap: 16px; }
   .topbar-right { gap: 8px; }
