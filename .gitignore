@@ -12,3 +12,6 @@ leelaz_opencl_tuning
 /build-validation-*
 .vs/
 build/
+
+# Local-only Fly.io integration plan
+/gui/fly/
