@@ -18,9 +18,18 @@
   // handlers: { boardClick(point), hover(point|null), playMove(gtpVertex), goTo(index) }
   function init(handlers) {
     const board = $("board");
-    board.addEventListener("click", (e) => { const p = Board.pointFromEvent(board, e); if (p) handlers.boardClick(p); });
+    // Not "click": analysis redraws the board's contents several times a second,
+    // and a click whose press and release hit different (replaced) elements is
+    // never fired. Press and release on the same point play instead.
+    let pressed = null;
+    board.addEventListener("pointerdown", (e) => { pressed = e.button === 0 ? Board.pointFromEvent(board, e) : null; });
+    board.addEventListener("pointerup", (e) => {
+      const p = e.button === 0 && pressed ? Board.pointFromEvent(board, e) : null;
+      if (p && p.x === pressed.x && p.y === pressed.y) handlers.boardClick(p);
+      pressed = null;
+    });
     board.addEventListener("mousemove", (e) => handlers.hover(Board.pointFromEvent(board, e)));
-    board.addEventListener("mouseleave", () => handlers.hover(null));
+    board.addEventListener("mouseleave", () => { pressed = null; handlers.hover(null); });
     $("candidates").addEventListener("click", (e) => {
       const row = e.target.closest("[data-move]");
       if (row) handlers.playMove(row.dataset.move);

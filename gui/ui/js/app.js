@@ -45,11 +45,13 @@
   const state = {
     size: 19, komi: DEFAULTS.komi, tab: "review", setup: [],
     engine: { kind: "katago", ready: false, version: "", network: "", backend: "", error: "" },
-    nodes: [], index: 0, paused: false, thinking: false, speed: null,
+    nodes: [], index: 0, paused: true,  // analysis starts on request (Space or the status pill)
+    thinking: false, speed: null,
     showTerritory: false, policy: null, hover: null, resignedAt: -1,
     review: null,  // {visits} while "Analyze game" steps through the moves
   };
   let settings = { ...DEFAULTS };
+  let savePath = "";  // file chosen at the last save; Save writes there without asking
   let exeDir = "", engine = null, engineSerial = 0, engineMoves = null, stderrTail = [];
 
   const send = (...fields) => window.chrome.webview.postMessage(fields.join("\t"));
@@ -74,6 +76,7 @@
 
   // ---------------- game tree (main line only) ----------------
   function newGame(size, setup = [], moves = []) {
+    savePath = "";  // a new or opened game must not overwrite the last saved file
     state.size = size;
     state.setup = setup;
     state.policy = null;
@@ -387,12 +390,21 @@
     newGame(game.size, setup, game.moves);
   }
 
-  function saveSgf() {
+  // Save asks for a file only the first time (or with Save as); later saves
+  // go straight to that file.
+  function saveSgf(ask) {
     const game = {
       size: state.size, komi: state.komi, black: "", white: "", setup: state.setup,
       moves: state.nodes.slice(1).map((n) => n.move),
     };
-    send("save-sgf", `game-${new Date().toISOString().slice(0, 10)}.sgf`, Go.writeSgf(game));
+    if (savePath && !ask) send("save-sgf-to", savePath, Go.writeSgf(game));
+    else send("save-sgf", savePath || `game-${new Date().toISOString().slice(0, 10)}.sgf`, Go.writeSgf(game));
+  }
+
+  function showSavePath() {
+    const name = savePath.split("\\").pop();
+    $("save-sgf").textContent = savePath ? `Save ${name}` : "Save SGF…";
+    $("save-sgf").title = savePath ? `Save to ${savePath}` : "Choose a file and save";
   }
 
   function openSettings() {
@@ -475,6 +487,7 @@
         let scenario = m.scenario || "";
         if (m.selftest && scenario.endsWith("-dark")) { settings.dark = true; scenario = scenario.slice(0, -5); }
         if (m.selftest && scenario === "leelaz19") settings.engine = "leelaz";
+        if (m.selftest) state.paused = false;  // the capture needs analysis
         applyScheme(settings.dark);
         applyPanes();
         state.komi = settings.komi;
@@ -505,7 +518,11 @@
         loadSgf(m.content);
         break;
       case "saved":
+        savePath = m.path;
         toast("Saved " + m.path);
+        break;
+      case "save-failed":
+        toast("Could not save " + m.path);
         break;
     }
   });
@@ -546,11 +563,13 @@
   $("sgf-button").addEventListener("click", (e) => {
     e.stopPropagation();
     const open = $("sgf-menu").hidden;
+    if (open) showSavePath();
     $("sgf-menu").hidden = !open;
     $("sgf-button").setAttribute("aria-expanded", String(open));
   });
   $("open-sgf").addEventListener("click", () => { closeSgfMenu(); send("open-sgf"); });
-  $("save-sgf").addEventListener("click", () => { closeSgfMenu(); saveSgf(); });
+  $("save-sgf").addEventListener("click", () => { closeSgfMenu(); saveSgf(false); });
+  $("save-sgf-as").addEventListener("click", () => { closeSgfMenu(); saveSgf(true); });
   document.addEventListener("click", (e) => { if (!$("sgf-menu").hidden && !e.target.closest(".menu-anchor")) closeSgfMenu(); });
   $("open-settings").addEventListener("click", openSettings);
   $("settings").addEventListener("close", () => { if ($("settings").returnValue === "ok") applySettings(); });
@@ -560,6 +579,7 @@
   document.addEventListener("keydown", (e) => {
     if ($("settings").open) return;
     if (e.key === "Escape" && !$("sgf-menu").hidden) { closeSgfMenu(); return; }
+    if (e.ctrlKey && e.key.toLowerCase() === "s") { e.preventDefault(); closeSgfMenu(); saveSgf(e.shiftKey); return; }
     if (e.key === "ArrowLeft") goTo(state.index - 1);
     else if (e.key === "ArrowRight") goTo(state.index + 1);
     else if (e.key === "Home") goTo(0);

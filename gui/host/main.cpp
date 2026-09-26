@@ -8,11 +8,13 @@
 //
 // Page -> host (string messages, fields separated by \t):
 //   hello | start id cwd cmdline | send id line | stop id
-//   open-sgf | save-sgf suggested-name content | save-settings json | ready
+//   open-sgf | save-sgf suggested-name-or-path content | save-sgf-to path content
+//   | save-settings json | ready
 // Host -> page (JSON):
 //   {type:"hello", exeDir, selftest, settings}   settings = saved JSON text or ""
 //   {type:"started", id, ok, error} {type:"line", id, stream, text}
 //   {type:"exit", id, code} {type:"file", path, content} {type:"saved", path}
+//   {type:"save-failed", path}
 
 #include <windows.h>
 #include <commdlg.h>
@@ -282,6 +284,12 @@ void open_sgf() {
     post_json(L"{\"type\":\"file\",\"path\":" + json_str(path) + L",\"content\":" + json_str(widen(content)) + L"}");
 }
 
+// Writes without asking: the page sends a path the user chose at an earlier save.
+void save_sgf_to(const std::wstring& path, const std::wstring& content) {
+    const bool ok = write_file(path, narrow(content));
+    post_json(L"{\"type\":\"" + std::wstring(ok ? L"saved" : L"save-failed") + L"\",\"path\":" + json_str(path) + L"}");
+}
+
 void save_sgf(const std::wstring& suggested, const std::wstring& content) {
     wchar_t path[MAX_PATH];
     lstrcpynW(path, suggested.c_str(), MAX_PATH);
@@ -293,9 +301,7 @@ void save_sgf(const std::wstring& suggested, const std::wstring& content) {
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"sgf";
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    if (GetSaveFileNameW(&ofn) && write_file(path, narrow(content))) {
-        post_json(L"{\"type\":\"saved\",\"path\":" + json_str(path) + L"}");
-    }
+    if (GetSaveFileNameW(&ofn)) save_sgf_to(path, content);
 }
 
 // ---------------- page messages ----------------
@@ -359,6 +365,9 @@ void on_web_message(const std::wstring& msg) {
     } else if (type == L"save-sgf" && p.size() >= 3) {
         const auto parts = split_tabs(msg, 3);
         save_sgf(parts[1], parts[2]);
+    } else if (type == L"save-sgf-to" && p.size() >= 3) {
+        const auto parts = split_tabs(msg, 3);
+        save_sgf_to(parts[1], parts[2]);
     } else if (type == L"save-settings" && p.size() >= 2) {
         write_file(settings_path(), narrow(split_tabs(msg, 2)[1]));
     } else if (type == L"theme" && p.size() >= 2) {
