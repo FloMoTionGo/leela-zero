@@ -146,11 +146,11 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .stats > div { display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
 .policy-wrap { display: flex; justify-content: center; }
-.variations { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
-.variation { display: flex; flex-direction: column; gap: 4px; padding: 9px 10px; border: 1px solid var(--hair); border-radius: 6px; cursor: pointer; }
-.variation.active { background: var(--chip); border-color: var(--chip); }
-.variation .title { font-size: 12.5px; font-weight: 500; }
-.variation .moves { font: 12px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.move-tree { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
+.move-tree svg { display: block; }
+.move-tree [data-node] { cursor: pointer; }
+.move-tree g[data-node]:hover circle { stroke: var(--accent); stroke-width: 2; }
+.record-move.branch > span:first-child::before { content: ""; display: inline-block; width: 5px; height: 5px; margin: 0 5px 2px 0; border-radius: 50%; background: var(--accent); vertical-align: middle; }
 
 /* ---- bottom ---- */
 .scrubber { grid-area: foot; flex-direction: row; align-items: center; gap: 16px; padding: 8px 18px; }

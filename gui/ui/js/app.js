@@ -47,7 +47,8 @@
     engine: { kind: "katago", ready: false, version: "", network: "", backend: "", error: "" },
     nodes: [], index: 0, paused: true,  // analysis starts on request (Space or the status pill)
     thinking: false, speed: null,
-    showTerritory: false, policy: null, hover: null, resignedAt: -1,
+    root: null, treeVersion: 0,  // see "game tree" below
+    showTerritory: false, policy: null, hover: null, resigned: null,
     review: null,  // {visits} while "Analyze game" steps through the moves
   };
   let settings = { ...DEFAULTS };
@@ -74,26 +75,66 @@
     toastTimer = setTimeout(() => { t.hidden = true; }, 4000);
   }
 
-  // ---------------- game tree (main line only) ----------------
-  function newGame(size, setup = [], moves = []) {
+  // ---------------- game tree ----------------
+  // Every node keeps its children (variations, first = main line) and `next`,
+  // the child last visited. state.nodes is the current line: root to the shown
+  // node, then on through `next` to the end, so the record, graph and arrow
+  // keys all follow the branch being looked at. state.treeVersion changes
+  // whenever a node is added, for the move tree panel.
+  let nodeSerial = 0;
+  function makeNode(parent, position, move, toPlay) {
+    const node = { id: ++nodeSerial, parent, children: [], next: null, position, move, toPlay, analysis: null };
+    if (parent) { parent.children.push(node); state.treeVersion++; }
+    return node;
+  }
+
+  // Shows `node`, making its line the current one.
+  function showNode(node) {
+    const path = [];
+    for (let n = node; n; n = n.parent) path.unshift(n);
+    for (let k = 1; k < path.length; k++) path[k - 1].next = path[k];
+    state.index = path.length - 1;
+    for (let n = node.next; n; n = n.next) path.push(n);
+    state.nodes = path;
+    state.root = path[0];
+  }
+
+  // Plays `move` after `node`: an existing child with that move is reused, so
+  // replaying a move follows its branch instead of adding a copy.
+  function addMove(node, move, position) {
+    return node.children.find((c) => sameMove(c.move, move)) ||
+      makeNode(node, position || node.position.play(move.color, move.vertex), move, Go.other(move.color));
+  }
+
+  // tree: list of branches { move, children } as Go.parseSgf returns them.
+  function newGame(size, setup = [], tree = []) {
     savePath = "";  // a new or opened game must not overwrite the last saved file
     state.size = size;
     state.setup = setup;
     state.policy = null;
-    state.resignedAt = -1;
+    state.resigned = null;
+    state.treeVersion++;
     const position = new Go.Position(size);
     for (const s of setup) position.grid[s.vertex.y * size + s.vertex.x] = s.color;
     const handicap = setup.length > 0 && setup.every((s) => s.color === Go.BLACK);
-    state.nodes = [{ position, move: null, toPlay: handicap ? Go.WHITE : Go.BLACK, analysis: null }];
-    for (const m of moves) {
-      const last = state.nodes[state.nodes.length - 1];
-      const next = last.position.play(m.color, m.vertex);
-      if (!next) { toast(`Move ${state.nodes.length} in the file is illegal; the game stops there.`); break; }
-      state.nodes.push({ position: next, move: m, toPlay: Go.other(m.color), analysis: null });
-    }
-    state.index = state.nodes.length - 1;
+    const root = makeNode(null, position, null, handicap ? Go.WHITE : Go.BLACK);
+    let illegal = 0;
+    const grow = (parent, branches) => {
+      for (const b of branches) {
+        const next = parent.position.play(b.move.color, b.move.vertex);
+        if (!next) { illegal++; continue; }
+        grow(addMove(parent, b.move, next), b.children);
+      }
+    };
+    grow(root, tree);
+    if (illegal) toast(`${illegal} illegal move${illegal > 1 ? "s" : ""} in the file; the line${illegal > 1 ? "s stop" : " stops"} there.`);
+    let end = root;
+    while (end.children.length) end = end.children[0];
+    showNode(end);
     positionChanged();
   }
+
+  const chain = (moves) => moves.reduceRight((children, move) => [{ move, children }], []);
 
   function positionChanged() {
     state.policy = null;
@@ -106,11 +147,11 @@
     const node = current();
     if (state.thinking || gameOver()) return;
     if (state.tab === "play" && node.toPlay !== settings.human) return;
-    const next = node.position.play(node.toPlay, vertex);
+    const move = { color: node.toPlay, vertex };
+    const existing = node.children.find((c) => sameMove(c.move, move));
+    const next = existing ? existing.position : node.position.play(move.color, vertex);
     if (!next) { toast("Illegal move"); return; }
-    state.nodes.length = state.index + 1;
-    state.nodes.push({ position: next, move: { color: node.toPlay, vertex }, toPlay: Go.other(node.toPlay), analysis: null });
-    state.index++;
+    showNode(addMove(node, move, next));
     positionChanged();
   }
 
@@ -124,10 +165,34 @@
     positionChanged();
   }
 
+  // Jumps to any node of the tree (move tree panel).
+  function goToNode(node) {
+    if (state.thinking || node === current()) return;
+    state.review = null;
+    showNode(node);
+    positionChanged();
+  }
+
+  // Up/down: the previous or next variation at the closest branch point above.
+  function switchBranch(step) {
+    if (state.thinking) return;
+    for (let n = current(); n.parent; n = n.parent) {
+      const siblings = n.parent.children;
+      if (siblings.length < 2) continue;
+      const k = siblings.indexOf(n) + step;
+      if (k < 0 || k >= siblings.length) return;
+      let target = siblings[k];
+      // keep the same depth where that branch reaches it
+      for (let d = state.index - (state.nodes.indexOf(n)); d > 0 && (target.next || target.children[0]); d--) target = target.next || target.children[0];
+      goToNode(target);
+      return;
+    }
+  }
+
   function gameOver() {
     const n = state.nodes, i = state.index;
     const passes = i >= 2 && n[i].move.vertex === null && n[i - 1].move.vertex === null;
-    return passes || state.resignedAt === i;
+    return passes || state.resigned === n[i];
   }
 
   // ---------------- engine ----------------
@@ -227,12 +292,12 @@
     }
     if (syncAgain) return;
 
-    const idx = state.index;
-    if (state.engine.kind === "katago" && !(state.policy && state.policy.index === idx)) {
+    const shown = current();
+    if (state.engine.kind === "katago" && !(state.policy && state.policy.node === shown)) {
       try {
         const raw = await engine.command("kata-raw-nn 0");
-        if (!syncAgain && state.index === idx) {
-          state.policy = { index: idx, ...Gtp.parseRawNn(raw.split("\n"), state.size) };
+        if (!syncAgain && current() === shown) {
+          state.policy = { node: shown, ...Gtp.parseRawNn(raw.split("\n"), state.size) };
           scheduleRender();
         }
       } catch (e) { /* policy panel falls back to search priors */ }
@@ -246,11 +311,11 @@
       return;
     }
     wantEngineMove = false;
-    if (!state.paused) startAnalysis(idx);
+    if (!state.paused) startAnalysis(shown);
   }
 
   async function engineMove() {
-    const idx = state.index, node = current(), color = node.toPlay;
+    const node = current(), color = node.toPlay;
     const prof = PROFILES[state.engine.kind];
     state.thinking = true;
     scheduleRender();
@@ -259,17 +324,16 @@
       const reply = (await engine.command(`genmove ${color === Go.BLACK ? "b" : "w"}`)).trim();
       if (prof.afterGenmove) await engine.command(prof.afterGenmove);
       if (/^resign$/i.test(reply)) {
-        state.resignedAt = idx;
+        state.resigned = node;
         toast(`${prof.name} resigns`);
         return;
       }
       const vertex = Go.fromGtp(reply, state.size);
+      const move = { color, vertex };
       const next = node.position.play(color, vertex);
-      if (!next || state.index !== idx) { engineMoves = null; return; }
-      state.nodes.length = idx + 1;
-      state.nodes.push({ position: next, move: { color, vertex }, toPlay: Go.other(color), analysis: null });
-      state.index = idx + 1;
-      engineMoves.moves.push({ color, vertex });
+      if (!next || current() !== node) { engineMoves = null; return; }
+      showNode(addMove(node, move, next));
+      engineMoves.moves.push(move);
       state.policy = null;
     } finally {
       state.thinking = false;
@@ -278,11 +342,10 @@
     }
   }
 
-  function startAnalysis(idx) {
+  function startAnalysis(node) {
     let last = null;
     engine.analyze(PROFILES[state.engine.kind].analyze, (info) => {
-      const node = state.nodes[idx];
-      if (!node || state.index !== idx || !info.candidates.length) return;
+      if (current() !== node || !info.candidates.length) return;
       node.analysis = normalize(info, node.toPlay);
       const now = performance.now();
       if (last && now > last.t) {
@@ -387,16 +450,13 @@
     if (setup.some((s) => s.color === Go.WHITE)) toast("White setup stones are shown but not sent to the engine.");
     state.komi = game.komi;
     state.tab = "review";
-    newGame(game.size, setup, game.moves);
+    newGame(game.size, setup, game.tree);
   }
 
   // Save asks for a file only the first time (or with Save as); later saves
-  // go straight to that file.
+  // go straight to that file. Every variation is saved.
   function saveSgf(ask) {
-    const game = {
-      size: state.size, komi: state.komi, black: "", white: "", setup: state.setup,
-      moves: state.nodes.slice(1).map((n) => n.move),
-    };
+    const game = { size: state.size, komi: state.komi, black: "", white: "", setup: state.setup, tree: state.root.children };
     if (savePath && !ask) send("save-sgf-to", savePath, Go.writeSgf(game));
     else send("save-sgf", savePath || `game-${new Date().toISOString().slice(0, 10)}.sgf`, Go.writeSgf(game));
   }
@@ -450,7 +510,7 @@
       : ["Q16", "D4", "Q3", "D16", "R5", "C10", "O17", "F17", "C3", "D3", "C4", "D5", "B6"];
     const size = nine ? 9 : 19;
     if (nine) { state.komi = 7; state.showTerritory = true; }
-    newGame(size, [], opening.map((v, i) => ({ color: i % 2 ? Go.WHITE : Go.BLACK, vertex: Go.fromGtp(v, size) })));
+    newGame(size, [], chain(opening.map((v, i) => ({ color: i % 2 ? Go.WHITE : Go.BLACK, vertex: Go.fromGtp(v, size) }))));
     selftestTrace = [];
     const started = performance.now();
     let reviewStarted = false;
@@ -538,6 +598,7 @@
     },
     playMove: (gtp) => { if (state.tab !== "play") tryPlay(Go.fromGtp(gtp, state.size)); },
     goTo,
+    goToNode,
   });
 
   for (const b of document.querySelectorAll("#tabs button")) {
@@ -582,6 +643,8 @@
     if (e.ctrlKey && e.key.toLowerCase() === "s") { e.preventDefault(); closeSgfMenu(); saveSgf(e.shiftKey); return; }
     if (e.key === "ArrowLeft") goTo(state.index - 1);
     else if (e.key === "ArrowRight") goTo(state.index + 1);
+    else if (e.key === "ArrowUp") { e.preventDefault(); switchBranch(-1); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); switchBranch(1); }
     else if (e.key === "Home") goTo(0);
     else if (e.key === "End") goTo(state.nodes.length - 1);
     else if (e.key === " ") { e.preventDefault(); togglePause(); }

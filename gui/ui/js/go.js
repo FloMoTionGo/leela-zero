@@ -87,18 +87,20 @@
     }
   }
 
-  // ---- SGF: main line only, enough for SZ/KM/players/setup/moves ----
+  // ---- SGF: SZ/KM/players/root setup and the move tree with its variations ----
+  // parseSgf returns { size, komi, black, white, setup, moves, tree }: tree is the
+  // list of first moves, each { move {color, vertex}, children [...] }; moves is
+  // its main line (first child all the way down). Nodes without B/W are skipped.
   function parseSgf(text) {
-    const props = [];  // [{ident, values}] per node, main line
     let i = text.indexOf("(");
     if (i < 0) throw new Error("not an SGF file");
-    let depth = 0, node = null, inMainLine = true;
-    while (i < text.length) {
-      const ch = text[i];
-      if (ch === "(") { depth++; if (depth > 1 && node === null) inMainLine = false; i++; continue; }
-      if (ch === ")") { depth--; inMainLine = false; i++; continue; }  // first variation ends the main line
-      if (ch === ";") { if (inMainLine) { node = {}; props.push(node); } i++; continue; }
-      if (/[A-Z]/.test(ch)) {
+    const skipSpace = () => { while (i < text.length && /\s/.test(text[i])) i++; };
+    function parseNode() {  // at ";"
+      i++;
+      const node = {};
+      while (true) {
+        skipSpace();
+        if (!/[A-Za-z]/.test(text[i] || "")) return node;
         let j = i;
         while (/[A-Za-z]/.test(text[j])) j++;
         const ident = text.slice(i, j).replace(/[a-z]/g, "");
@@ -111,16 +113,38 @@
           values.push(v);
           j = k + 1;
         }
-        if (inMainLine && node) node[ident] = (node[ident] || []).concat(values);
+        node[ident] = (node[ident] || []).concat(values);
         i = j;
-        continue;
       }
-      i++;
     }
-    const rootNode = props[0] || {};
+    function parseTree() {  // at "("; returns { nodes, children }
+      i++;
+      const t = { nodes: [], children: [] };
+      while (i < text.length) {
+        skipSpace();
+        const ch = text[i];
+        if (ch === ";") t.nodes.push(parseNode());
+        else if (ch === "(") t.children.push(parseTree());
+        else if (ch === ")") { i++; break; }
+        else i++;
+      }
+      return t;
+    }
+    const top = parseTree();
+    const rootNode = top.nodes[0] || {};
     const size = parseInt((rootNode.SZ || ["19"])[0], 10);
     const sgfPoint = (s) => (s === "" || (size <= 19 && s === "tt") ? null
       : { x: s.charCodeAt(0) - 97, y: s.charCodeAt(1) - 97 });
+    const moveOf = (n) => (n.B ? { color: BLACK, vertex: sgfPoint(n.B[0]) }
+      : n.W ? { color: WHITE, vertex: sgfPoint(n.W[0]) } : null);
+    // the moves that follow node k of sequence t, as a list of branches
+    function build(t, k) {
+      for (; k < t.nodes.length; k++) {
+        const move = moveOf(t.nodes[k]);
+        if (move) return [{ move, children: build(t, k + 1) }];
+      }
+      return t.children.flatMap((c) => build(c, 0));
+    }
     const game = {
       size,
       komi: parseFloat((rootNode.KM || ["7.5"])[0]),
@@ -128,18 +152,19 @@
       white: (rootNode.PW || [""])[0],
       setup: [],
       moves: [],
+      tree: build(top, 0),
     };
-    for (const n of props) {
+    for (const n of top.nodes) {
       for (const [ident, color] of [["AB", BLACK], ["AW", WHITE]]) {
         for (const v of n[ident] || []) game.setup.push({ color, vertex: sgfPoint(v) });
       }
-      for (const [ident, color] of [["B", BLACK], ["W", WHITE]]) {
-        if (n[ident]) game.moves.push({ color, vertex: sgfPoint(n[ident][0]) });
-      }
     }
+    for (let list = game.tree; list.length; list = list[0].children) game.moves.push(list[0].move);
     return game;
   }
 
+  // game.tree (as parseSgf returns it; extra node fields are ignored) or,
+  // without one, game.moves as a single line.
   function writeSgf(game) {
     const pt = (v) => (v === null ? "" : String.fromCharCode(97 + v.x, 97 + v.y));
     const esc = (s) => String(s).replace(/([\]\\])/g, "\\$1");
@@ -149,8 +174,20 @@
     const ab = game.setup.filter((s) => s.color === BLACK), aw = game.setup.filter((s) => s.color === WHITE);
     if (ab.length) out += "AB" + ab.map((s) => `[${pt(s.vertex)}]`).join("");
     if (aw.length) out += "AW" + aw.map((s) => `[${pt(s.vertex)}]`).join("");
-    for (const m of game.moves) out += `;${m.color === BLACK ? "B" : "W"}[${pt(m.vertex)}]`;
-    return out + ")\n";
+    const node = (n) => `;${n.move.color === BLACK ? "B" : "W"}[${pt(n.move.vertex)}]`;
+    // a run of single moves, then one bracketed variation per branch
+    function sequence(list) {
+      let s = "";
+      while (list.length === 1) { s += node(list[0]); list = list[0].children; }
+      for (const n of list.length > 1 ? list : []) s += "(" + node(n) + sequence(n.children) + ")";
+      return s;
+    }
+    let tree = game.tree;
+    if (!tree) {
+      tree = [];
+      for (let k = game.moves.length - 1; k >= 0; k--) tree = [{ move: game.moves[k], children: tree }];
+    }
+    return out + sequence(tree) + ")\n";
   }
 
   const Go = { LETTERS, EMPTY, BLACK, WHITE, other, toGtp, fromGtp, Position, parseSgf, writeSgf };

@@ -73,12 +73,30 @@ test("SGF round trip keeps size, komi, players, setup and moves", () => {
     moves: [{ color: WHITE, vertex: { x: 9, y: 9 } }, { color: BLACK, vertex: null }],
   };
   const back = Go.parseSgf(Go.writeSgf(game));
+  delete back.tree;
   assert.deepStrictEqual(back, game);
 });
 
-test("SGF parser follows the main line and ignores variations", () => {
+test("SGF parser: main line is the first variation", () => {
   const g = Go.parseSgf("(;SZ[9]KM[7];B[ee](;W[cc];B[gg])(;W[gc]))");
   assert.deepStrictEqual(g.moves.map((m) => m.vertex), [{ x: 4, y: 4 }, { x: 2, y: 2 }, { x: 6, y: 6 }]);
+});
+
+// tree as nested "move" strings for easy comparison: ee(cc(gg) gc)
+const shape = (list) => list.map((n) => (n.move.vertex ? String.fromCharCode(97 + n.move.vertex.x, 97 + n.move.vertex.y) : "tt") +
+  (n.children.length ? "(" + shape(n.children) + ")" : "")).join(" ");
+
+test("SGF parser keeps every variation, skips move-less nodes", () => {
+  const g = Go.parseSgf("(;SZ[9];B[ee](;W[cc];C[note];B[gg](;W[aa])(;W[bb]))(;W[gc]))");
+  assert.strictEqual(shape(g.tree), "ee(cc(gg(aa bb)) gc)");
+});
+
+test("SGF variations survive a write and read", () => {
+  const text = "(;SZ[9];B[ee](;W[cc];B[gg](;W[aa])(;W[bb]))(;W[gc];B[]))";
+  const g = Go.parseSgf(text);
+  const back = Go.parseSgf(Go.writeSgf(g));
+  assert.strictEqual(shape(back.tree), "ee(cc(gg(aa bb)) gc(tt))");
+  assert.ok(Go.writeSgf(g).includes(";B[ee](;W[cc];B[gg](;W[aa])(;W[bb]))(;W[gc];B[]))"));
 });
 
 console.log(failures === 0 ? "ALL PASS" : failures + " FAILED");
