@@ -454,9 +454,13 @@
   }
 
   // Save asks for a file only the first time (or with Save as); later saves
-  // go straight to that file. Every variation is saved.
+  // go straight to that file. Every variation is saved; the line being looked
+  // at goes first, so it is the main line that opens when the file is loaded.
   function saveSgf(ask) {
-    const game = { size: state.size, komi: state.komi, black: "", white: "", setup: state.setup, tree: state.root.children };
+    const onLine = new Set(state.nodes);
+    const ordered = (list) => [...list].sort((a, b) => onLine.has(b) - onLine.has(a))
+      .map((n) => ({ move: n.move, children: ordered(n.children) }));
+    const game = { size: state.size, komi: state.komi, black: "", white: "", setup: state.setup, tree: ordered(state.root.children) };
     if (savePath && !ask) send("save-sgf-to", savePath, Go.writeSgf(game));
     else send("save-sgf", savePath || `game-${new Date().toISOString().slice(0, 10)}.sgf`, Go.writeSgf(game));
   }
