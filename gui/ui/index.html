@@ -74,8 +74,18 @@
       <div class="mono pv" id="mainline"></div>
     </section>
     <section class="card grow">
-      <div class="card-head"><span class="label">Game record</span><span class="muted small">Black win % after move</span></div>
-      <div class="record" id="record"></div>
+      <div class="card-head"><span class="label">Game tree</span><span class="muted small">Black win % after move</span></div>
+      <div class="gt-head"><span>#</span><span>Move</span><span class="axis"><span>W</span><span>50</span><span>B</span></span><span class="wrh">B %</span></div>
+      <div class="gt" id="game-tree"><div class="gt-inner" id="gt-inner"></div></div>
+      <div class="gt-legend">
+        <span><svg class="gt-lane" viewBox="0 0 26 12"><circle class="stone-b" cx="13" cy="6" r="3.2"/><circle class="swing" cx="13" cy="6" r="5.2"/></svg><b class="bad">−12</b> lost &gt; 10 %</span>
+        <span><svg class="gt-lane" viewBox="0 0 26 12"></svg><b>−7</b> lost 5–10 %</span>
+        <span><svg class="gt-lane" viewBox="0 0 26 12"><path class="tint" d="M4 0 C4 7 22 5 22 12 H13 V0 Z"/><line class="mid" x1="13" y1="0" x2="13" y2="12"/><path class="trunk" d="M4 0 C4 7 22 5 22 12"/></svg>who leads (W left · B right)</span>
+        <span><svg class="gt-lane" viewBox="0 0 26 12"><path class="trunk pending" d="M13 0 V12"/><circle class="hollow" cx="13" cy="6" r="3.2"/></svg>not analysed yet</span>
+        <span><svg class="gt-lane" viewBox="0 0 26 12"><path class="vine" d="M2 10 C10 10 14 2 24 2"/></svg>other variation</span>
+        <span><svg class="gt-lane" viewBox="0 0 26 12"></svg><b class="acc">12</b> variations split here</span>
+      </div>
+      <div class="gt-foot"><span id="gt-status"></span><span><span class="kbd">↑↓</span> move · <span class="kbd">←→</span> branch</span></div>
     </section>
   </aside>
 
@@ -85,7 +95,7 @@
       <button class="chip-button" id="new-game">New game</button>
       <button class="chip-button" id="pass">Pass</button>
       <button class="chip-button" id="engine-move">Engine move</button>
-      <button class="chip-button" id="review-game" title="Analyse every move to fill the win-rate graph">Analyze game</button>
+      <button class="chip-button" id="review-game" title="Analyse every move to fill the game tree's win-rate curve">Analyze game</button>
       <span class="spacer"></span>
       <button class="chip-button" id="territory-toggle"><svg class="icon" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M2.5 8h11M8 2.5v11"/></svg>Territory</button>
       <button class="icon-button" id="toggle-right" aria-pressed="false" title="Hide the right panel"><svg class="icon" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M9.5 3v10"/><path class="pane-fill" d="M10.2 3.7h3.1v8.6h-3.1z"/></svg></button>
@@ -108,17 +118,7 @@
       <div class="card-head"><span class="label">Policy · network prior</span><span class="muted small" id="policy-pass"></span></div>
       <div class="policy-wrap"><svg id="policy"></svg></div>
     </section>
-    <section class="card grow">
-      <div class="card-head"><span class="label">Move tree</span><span class="muted small">click to jump · ↑↓ branch</span></div>
-      <div class="move-tree" id="move-tree"></div>
-    </section>
   </aside>
-
-  <footer class="scrubber card">
-    <button class="icon-button" id="prev" title="Previous move (←)"><svg class="icon" viewBox="0 0 16 16"><path d="m10 3.5-4.5 4.5 4.5 4.5"/></svg></button>
-    <svg id="winrate-graph"></svg>
-    <button class="icon-button" id="next" title="Next move (→)"><svg class="icon" viewBox="0 0 16 16"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></button>
-  </footer>
 </div>
 
 <dialog id="settings">

@@ -47,7 +47,7 @@
     engine: { kind: "katago", ready: false, version: "", network: "", backend: "", error: "" },
     nodes: [], index: 0, paused: true,  // analysis starts on request (Space or the status pill)
     thinking: false, speed: null,
-    root: null, treeVersion: 0,  // see "game tree" below
+    root: null,  // see "game tree" below
     showTerritory: false, policy: null, hover: null, resigned: null,
     review: null,  // {visits} while "Analyze game" steps through the moves
   };
@@ -78,13 +78,12 @@
   // ---------------- game tree ----------------
   // Every node keeps its children (variations, first = main line) and `next`,
   // the child last visited. state.nodes is the current line: root to the shown
-  // node, then on through `next` to the end, so the record, graph and arrow
-  // keys all follow the branch being looked at. state.treeVersion changes
-  // whenever a node is added, for the move tree panel.
+  // node, then on through `next` to the end, so the game tree panel and the
+  // arrow keys follow the branch being looked at.
   let nodeSerial = 0;
   function makeNode(parent, position, move, toPlay) {
     const node = { id: ++nodeSerial, parent, children: [], next: null, position, move, toPlay, analysis: null };
-    if (parent) { parent.children.push(node); state.treeVersion++; }
+    if (parent) parent.children.push(node);
     return node;
   }
 
@@ -113,7 +112,6 @@
     state.setup = setup;
     state.policy = null;
     state.resigned = null;
-    state.treeVersion++;
     const position = new Go.Position(size);
     for (const s of setup) position.grid[s.vertex.y * size + s.vertex.x] = s.color;
     const handicap = setup.length > 0 && setup.every((s) => s.color === Go.BLACK);
@@ -165,7 +163,7 @@
     positionChanged();
   }
 
-  // Jumps to any node of the tree (move tree panel).
+  // Jumps to any node of the tree (a side curve in the game tree panel).
   function goToNode(node) {
     if (state.thinking || node === current()) return;
     state.review = null;
@@ -173,20 +171,12 @@
     positionChanged();
   }
 
-  // Up/down: the previous or next variation at the closest branch point above.
+  // Left/right: the previous or next of the different moves played at this
+  // move number anywhere in the tree; stops at the first and the last.
   function switchBranch(step) {
-    if (state.thinking) return;
-    for (let n = current(); n.parent; n = n.parent) {
-      const siblings = n.parent.children;
-      if (siblings.length < 2) continue;
-      const k = siblings.indexOf(n) + step;
-      if (k < 0 || k >= siblings.length) return;
-      let target = siblings[k];
-      // keep the same depth where that branch reaches it
-      for (let d = state.index - (state.nodes.indexOf(n)); d > 0 && (target.next || target.children[0]); d--) target = target.next || target.children[0];
-      goToNode(target);
-      return;
-    }
+    const here = Panels.movesAt(state.root, state.index);
+    const target = here[here.indexOf(current()) + step];
+    if (target) goToNode(target);
   }
 
   function gameOver() {
@@ -514,7 +504,14 @@
       : ["Q16", "D4", "Q3", "D16", "R5", "C10", "O17", "F17", "C3", "D3", "C4", "D5", "B6"];
     const size = nine ? 9 : 19;
     if (nine) { state.komi = 7; state.showTerritory = true; }
-    newGame(size, [], chain(opening.map((v, i) => ({ color: i % 2 ? Go.WHITE : Go.BLACK, vertex: Go.fromGtp(v, size) }))));
+    const moves = (list, first) => list.map((v, i) => ({ color: (first + i) % 2 ? Go.WHITE : Go.BLACK, vertex: Go.fromGtp(v, size) }));
+    const tree = chain(moves(opening, 0));
+    if (scenario === "review19") {  // a side variation from move 5, for the game tree's side curves
+      let at = tree;
+      for (let k = 0; k < 4; k++) at = at[0].children;
+      at.push(...chain(moves(["R14", "P17", "R10", "D10"], 4)));
+    }
+    newGame(size, [], tree);
     selftestTrace = [];
     const started = performance.now();
     let reviewStarted = false;
@@ -638,17 +635,16 @@
   document.addEventListener("click", (e) => { if (!$("sgf-menu").hidden && !e.target.closest(".menu-anchor")) closeSgfMenu(); });
   $("open-settings").addEventListener("click", openSettings);
   $("settings").addEventListener("close", () => { if ($("settings").returnValue === "ok") applySettings(); });
-  $("prev").addEventListener("click", () => goTo(state.index - 1));
-  $("next").addEventListener("click", () => goTo(state.index + 1));
   window.addEventListener("resize", scheduleRender);
   document.addEventListener("keydown", (e) => {
     if ($("settings").open) return;
     if (e.key === "Escape" && !$("sgf-menu").hidden) { closeSgfMenu(); return; }
     if (e.ctrlKey && e.key.toLowerCase() === "s") { e.preventDefault(); closeSgfMenu(); saveSgf(e.shiftKey); return; }
-    if (e.key === "ArrowLeft") goTo(state.index - 1);
-    else if (e.key === "ArrowRight") goTo(state.index + 1);
-    else if (e.key === "ArrowUp") { e.preventDefault(); switchBranch(-1); }
-    else if (e.key === "ArrowDown") { e.preventDefault(); switchBranch(1); }
+    // the game tree runs downwards: up/down step through moves, left/right switch variations
+    if (e.key === "ArrowUp") { e.preventDefault(); goTo(state.index - 1); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); goTo(state.index + 1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); switchBranch(-1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); switchBranch(1); }
     else if (e.key === "Home") goTo(0);
     else if (e.key === "End") goTo(state.nodes.length - 1);
     else if (e.key === " ") { e.preventDefault(); togglePause(); }

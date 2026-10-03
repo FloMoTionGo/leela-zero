@@ -62,17 +62,17 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   display: grid;
   --side: minmax(300px, 400px);
   grid-template-columns: var(--side) 1fr var(--side);
-  grid-template-rows: 64px 1fr 88px;
-  grid-template-areas: "top top top" "left center right" "foot foot foot";
+  grid-template-rows: 64px 1fr;
+  grid-template-areas: "top top top" "left center right";
   gap: 16px 28px;
   padding: 0 28px 16px;
 }
 
 /* Side panels fold away (buttons at both ends of the board toolbar) so the
    board can take the whole width. */
-#app.hide-left { grid-template-columns: 1fr var(--side); grid-template-areas: "top top" "center right" "foot foot"; }
-#app.hide-right { grid-template-columns: var(--side) 1fr; grid-template-areas: "top top" "left center" "foot foot"; }
-#app.hide-left.hide-right { grid-template-columns: 1fr; grid-template-areas: "top" "center" "foot"; }
+#app.hide-left { grid-template-columns: 1fr var(--side); grid-template-areas: "top top" "center right"; }
+#app.hide-right { grid-template-columns: var(--side) 1fr; grid-template-areas: "top top" "left center"; }
+#app.hide-left.hide-right { grid-template-columns: 1fr; grid-template-areas: "top" "center"; }
 #app.hide-left .left, #app.hide-right .right { display: none; }
 .pane-fill { fill: currentColor; stroke: none; opacity: 0.35; }
 .icon-button[aria-pressed="true"] .pane-fill { opacity: 0; }  /* hollow = panel hidden */
@@ -119,13 +119,55 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .cand-row .prior { text-align: right; font-size: 12px; color: var(--muted); }
 .cand-row.no-lead { grid-template-columns: 12px 44px 64px 1fr 44px; }
 .pv { font-size: 13px; line-height: 1.7; min-height: 22px; }
-.record { overflow-y: auto; min-height: 0; }
-.record-row { display: grid; grid-template-columns: 30px 1fr 1fr; column-gap: 6px; height: 28px; align-items: center; font: 13px var(--mono); }
-.record-row.head { height: auto; padding-bottom: 4px; border-bottom: 1px solid var(--hair); font: 11px var(--sans); color: var(--muted); }
-.record-move { display: flex; justify-content: space-between; align-items: center; padding: 0 6px; border-radius: 4px; cursor: pointer; }
-.record-move:hover { background: var(--ground); }
-.record-move.current { background: var(--chip); font-weight: 600; }
-.record-move .wr { font-size: 11px; color: var(--muted); }
+
+/* ---- game tree: the moves of the current line, with Black's win rate as a
+   vertical curve through them and the other variations as faint side curves ---- */
+.gt-head, .gt-row { display: grid; grid-template-columns: 26px 50px 1fr 58px; align-items: center; }
+.gt-head { font: 11px var(--sans); color: var(--muted); padding-bottom: 6px; border-bottom: 1px solid var(--hair); }
+.gt-head .axis { display: flex; justify-content: space-between; padding: 0 6px; font-family: var(--mono); font-size: 10.5px; }
+.gt-head .wrh, .gt-row .wr { text-align: right; padding-right: 6px; }
+.gt { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin: 0 -6px; padding: 0 6px; }
+.gt-inner { position: relative; }
+.gt-row { height: 26px; font: 13px var(--mono); border-radius: 5px; cursor: pointer; position: relative; }
+.gt-row:hover { box-shadow: inset 0 0 0 1px var(--hair); }  /* outlines, not fills: the curve stays visible */
+.gt-row.current { box-shadow: inset 0 0 0 2px var(--accent); font-weight: 600; }
+.gt-row .num { font-size: 11px; color: var(--muted); padding-left: 4px; }
+.gt-row.branch .num { color: var(--accent); font-weight: 600; }
+.gt-row .wr { font-size: 12px; }
+.gt-row .wr .d { font-size: 10px; margin-left: 3px; color: var(--muted); }
+.gt-row .wr .d.bad { color: var(--warn); }
+.gt-row.pending .wr { color: var(--muted); }
+.gt-row.spacer { cursor: default; }
+.gt-row.spacer:hover { box-shadow: none; }
+svg.gt-lane { position: absolute; top: 0; left: 76px; pointer-events: none; overflow: visible; }
+.gt-lane .mid { stroke: var(--hair); stroke-dasharray: 2 4; }
+.gt-lane .tint { fill: var(--ink); fill-opacity: 0.07; }
+.gt-lane .trunk { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-opacity: 0.85; }
+.gt-lane .trunk.pending { stroke-dasharray: 1 5; stroke-width: 2.2; stroke-opacity: 0.5; }
+.gt-lane .stone-b { fill: var(--stone-black); stroke: var(--stone-black-edge); stroke-width: 0.8; }
+.gt-lane .stone-w { fill: var(--stone-white); stroke: var(--stone-white-edge); stroke-width: 1; }
+.gt-lane .hollow { fill: var(--panel); stroke: var(--muted); stroke-width: 1.2; }
+.gt-lane .now { fill: none; stroke: var(--accent); stroke-width: 2; }
+.gt-lane .swing { fill: none; stroke: var(--warn); stroke-width: 1.3; }
+.gt-lane .vine { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; }
+.gt-lane .ghost { opacity: 0.42; transition: opacity 0.12s; pointer-events: auto; cursor: pointer; }
+.gt-lane .ghost .hit { fill: none; stroke: transparent; stroke-width: 14; }
+.gt-lane .ghost text { font: 10.5px var(--mono); fill: var(--muted); }
+.gt-lane .ghost:hover { opacity: 1; }
+.gt-lane .ghost:hover .vine { stroke: var(--ink); }
+.gt-lane .ghost:hover text { fill: var(--ink); }
+.gt-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; padding-top: 8px; border-top: 1px solid var(--hair); font-size: 11px; color: var(--muted); }
+.gt-legend > span { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
+.gt-legend svg.gt-lane { position: static; width: 26px; height: 12px; flex-shrink: 0; }
+.gt-legend .vine { opacity: 0.6; }
+.gt-legend svg:empty { display: none; }
+.gt-legend svg:empty + b { width: 26px; flex-shrink: 0; text-align: center; }  /* the number is the swatch */
+.gt-legend b { font: 600 10.5px var(--mono); color: var(--muted); }
+.gt-legend b.bad { color: var(--warn); }
+.gt-legend b.acc { color: var(--accent); }
+.gt-foot { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--hair); }
+.gt-foot b { color: var(--ink); font-weight: 600; }
+.kbd { font: 11px var(--mono); border: 1px solid var(--hair); border-radius: 3px; padding: 0 4px; }
 
 /* ---- center ---- */
 .center { grid-area: center; display: flex; flex-direction: column; align-items: center; gap: 10px; min-height: 0; min-width: 0; }
@@ -146,15 +188,6 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .stats > div { display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
 .policy-wrap { display: flex; justify-content: center; }
-.move-tree { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
-.move-tree svg { display: block; }
-.move-tree [data-node] { cursor: pointer; }
-.move-tree g[data-node]:hover circle { stroke: var(--accent); stroke-width: 2; }
-.record-move.branch > span:first-child::before { content: ""; display: inline-block; width: 5px; height: 5px; margin: 0 5px 2px 0; border-radius: 50%; background: var(--accent); vertical-align: middle; }
-
-/* ---- bottom ---- */
-.scrubber { grid-area: foot; flex-direction: row; align-items: center; gap: 16px; padding: 8px 18px; }
-#winrate-graph { flex: 1; height: 72px; cursor: pointer; }
 
 /* ---- SGF open/save dropdown ---- */
 .menu-anchor { position: relative; }
@@ -200,11 +233,8 @@ dialog::backdrop { background: rgba(34, 31, 27, 0.25); }
   #game-info, .brand span { display: none; }
 }
 @media (max-height: 820px) {
-  #app { grid-template-rows: 52px 1fr 72px; gap: 10px 18px; }
+  #app { grid-template-rows: 52px 1fr; gap: 10px 18px; }
   .cand-row { height: 28px; }
-  .record-row { height: 24px; }
   .eval-wr { font-size: 26px; }
   .eval-lead { font-size: 17px; }
-  #winrate-graph { height: 56px; }
-  .scrubber { padding: 6px 14px; }
 }

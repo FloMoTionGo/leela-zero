@@ -1,9 +1,9 @@
 # Leela Zero desktop GUI (Windows)
 
 A front window for analysing and playing Go with **KataGo** or **Leela Zero**:
-board-first layout with candidates, main line, game record, evaluation (win
-rate, score lead, visits, speed), network policy, variations, territory and a
-win-rate timeline.
+board-first layout with candidates, main line, evaluation (win rate, score
+lead, visits, speed), network policy, territory and a game tree that shows
+every variation with the win rate as a curve through the moves.
 
 The engines do all Go thinking. Credit where it belongs:
 

@@ -34,20 +34,18 @@
       const row = e.target.closest("[data-move]");
       if (row) handlers.playMove(row.dataset.move);
     });
-    $("record").addEventListener("click", (e) => {
-      const cell = e.target.closest("[data-index]");
-      if (cell) handlers.goTo(parseInt(cell.dataset.index, 10));
-    });
-    $("move-tree").addEventListener("click", (e) => {
-      const hit = e.target.closest("[data-node]"), nodes = $("move-tree")._nodes;
-      if (hit && nodes && nodes.has(hit.dataset.node)) handlers.goToNode(nodes.get(hit.dataset.node));
-    });
-    $("winrate-graph").addEventListener("click", (e) => {
-      const g = $("winrate-graph")._graph;
-      if (!g) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const i = Math.round(((e.clientX - rect.left) - g.padL) / (g.w - g.padL - g.padR) * g.n);
-      handlers.goTo(Math.max(0, Math.min(g.n, i)));
+    // pointerdown, not click: the tree is redrawn with every analysis update
+    $("gt-inner").addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const inner = $("gt-inner"), ghost = e.target.closest(".ghost");
+      if (ghost && inner._ghosts) {
+        // a side curve: its move at the current move number, or its last move
+        const g = inner._ghosts[+ghost.dataset.ghost];
+        handlers.goToNode(g.path[Math.max(1, Math.min(inner._index - g.from, g.path.length - 1))]);
+        return;
+      }
+      const row = e.target.closest(".gt-row[data-num]");
+      if (row) handlers.goTo(parseInt(row.dataset.num, 10));
     });
   }
 
@@ -58,11 +56,9 @@
     renderBoard(state);
     renderCandidates(state, node, hide);
     renderMainLine(node, hide);
-    renderRecord(state);
+    renderGameTree(state, hide);
     renderEvaluation(state, node, hide);
     renderPolicy(state, node, hide);
-    renderTree(state);
-    renderGraph(state, hide);
     renderEngineLine(state);
   }
 
@@ -145,30 +141,6 @@
     $("mainline").textContent = best ? best.pv.slice(0, 12).join(" ") : "";
   }
 
-  let lastRecordIndex = -1;
-  function renderRecord(state) {
-    const nodes = state.nodes;
-    let html = `<div class="record-row head"><span>#</span><span>Black</span><span>White</span></div>`;
-    for (let k = 1; k < nodes.length; k += 2) {
-      html += `<div class="record-row"><span class="muted">${(k + 1) / 2}</span>`;
-      for (const i of [k, k + 1]) {
-        if (i >= nodes.length) { html += "<span></span>"; continue; }
-        const a = nodes[i].analysis;
-        const wr = a ? Math.round(a.blackWinrate * 100) : "";
-        const branch = nodes[i].parent.children.length > 1 ? " branch" : "";  // other variations start here
-        html += `<span class="record-move${i === state.index ? " current" : ""}${branch}" data-index="${i}"><span>${moveLabel(nodes[i].move, state.size)}</span><span class="wr">${wr}</span></span>`;
-      }
-      html += "</div>";
-    }
-    const box = $("record");
-    box.innerHTML = html;
-    if (state.index !== lastRecordIndex) {
-      lastRecordIndex = state.index;
-      const cur = box.querySelector(".current");
-      if (cur) cur.scrollIntoView({ block: "nearest" });
-    }
-  }
-
   function renderEvaluation(state, node, hide) {
     const a = hide ? null : node.analysis;
     $("eval-wr").textContent = a ? pct(a.blackWinrate) : "—";
@@ -205,134 +177,135 @@
     });
   }
 
-  // ---- move tree: every variation, as on OGS ----
-  // Column = move number, row = variation lane. The first child continues its
-  // parent's row; each further child takes the first row below everything
-  // already drawn in the columns its branch spans, joined by a line down the
-  // parent's column and a diagonal step.
-  const TREE_CELL = 26, TREE_R = 9, TREE_PAD = 14;
+  // ---- game tree ----
+  // One row per move of the current line. Black's win rate after each move is
+  // a vertical curve through the rows (left = White leads, right = Black), and
+  // every variation that leaves the line is a faint side curve from its branch
+  // point, clickable. Moves without analysis sit on the last known value.
+  const ROW = 26, LANE_LEFT = 76, WR_COL = 58, LANE_PAD = 9;
 
-  // Depth first, first child first, with an explicit stack (games can be
-  // hundreds of moves deep). A branch picks its row when it is popped, after
-  // the whole line of its older sibling is placed.
-  function layoutTree(root) {
-    const colMax = [], items = [], edges = [];
-    const depthBelow = new Map();
-    const order = [root];
-    for (let k = 0; k < order.length; k++) order.push(...order[k].children);
-    for (let k = order.length - 1; k >= 0; k--) {
-      const n = order[k];
-      depthBelow.set(n, n.children.reduce((d, c) => Math.max(d, 1 + depthBelow.get(c)), 0));
-    }
-    const top = (x) => (colMax[x] === undefined ? -1 : colMax[x]);
-    const mark = (x, row) => { colMax[x] = Math.max(top(x), row); };
-    // stack entries: [node, col, parentRow, isFirstChild]
-    const stack = [[root, 0, 0, true]];
+  // The different moves played at move number `depth` anywhere in the tree,
+  // first child first; lines that agree there count once.
+  function movesAt(root, depth) {
+    const out = [], stack = [[root, 0]];
     while (stack.length) {
-      const [n, col, parentRow, first] = stack.pop();
-      let row = parentRow;
-      if (!first) {
-        for (let x = col - 1; x <= col + depthBelow.get(n); x++) row = Math.max(row, top(x) + 1);
-        mark(col - 1, row);  // the line down the parent's column
-      }
-      items.push({ node: n, col, row });
-      mark(col, row);
-      if (n.parent) edges.push({ from: [col - 1, parentRow], to: [col, row], child: n });
-      for (let k = n.children.length - 1; k >= 0; k--) stack.push([n.children[k], col + 1, row, k === 0]);
+      const [n, d] = stack.pop();
+      if (d === depth) { out.push(n); continue; }
+      for (let k = n.children.length - 1; k >= 0; k--) stack.push([n.children[k], d + 1]);
     }
-    return { items, edges };
+    return out;
   }
 
-  let treeKey = "";
-  function renderTree(state) {
-    const wrap = $("move-tree");
-    const node = state.nodes[state.index], end = state.nodes[state.nodes.length - 1];
-    const key = `${state.treeVersion}|${node.id}|${end.id}`;
-    if (key === treeKey) return;
-    const moved = !treeKey.startsWith(`${state.treeVersion}|${node.id}|`);
-    treeKey = key;
+  // a smooth curve through points (Catmull-Rom as cubic Béziers)
+  function smooth(pts) {
+    const f = (v) => v.toFixed(1);
+    let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+      d += ` C${f(p1[0] + (p2[0] - p0[0]) / 6)},${f(p1[1] + (p2[1] - p0[1]) / 6)} ${f(p2[0] - (p3[0] - p1[0]) / 6)},${f(p2[1] - (p3[1] - p1[1]) / 6)} ${f(p2[0])},${f(p2[1])}`;
+    }
+    return d;
+  }
 
-    const { items, edges } = layoutTree(state.root);
-    const onLine = new Set(state.nodes);
-    const X = (col) => TREE_PAD + col * TREE_CELL, Y = (row) => TREE_PAD + row * TREE_CELL;
-    let maxCol = 0, maxRow = 0;
-    for (const it of items) { maxCol = Math.max(maxCol, it.col); maxRow = Math.max(maxRow, it.row); }
-    const w = X(maxCol) + TREE_PAD, h = Y(maxRow) + TREE_PAD;
-    const o = [];
-    // side lines first, the current line on top
-    const sorted = edges.slice().sort((a, b) => onLine.has(a.child) - onLine.has(b.child));
-    for (const e of sorted) {
-      const [c0, r0] = e.from, [c1, r1] = e.to;
-      const d = r1 === r0 ? `M${X(c0)},${Y(r0)} L${X(c1)},${Y(r1)}`
-        : `M${X(c0)},${Y(r0)} L${X(c0)},${Y(r1 - 1)} L${X(c1)},${Y(r1)}`;
-      const main = onLine.has(e.child);
-      o.push(`<path d="${d}" fill="none" stroke="${main ? "var(--ink)" : "var(--muted)"}" stroke-width="${main ? 2 : 1.2}" stroke-opacity="${main ? 0.8 : 0.55}"/>`);
-    }
-    for (const it of items) {
-      const n = it.node, x = X(it.col), y = Y(it.row);
-      if (n === node) o.push(`<circle cx="${x}" cy="${y}" r="${TREE_R + 3.5}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>`);
-      if (!n.move) {
-        o.push(`<rect data-node="${n.id}" x="${x - 6}" y="${y - 6}" width="12" height="12" rx="2" fill="var(--muted)"><title>Start</title></rect>`);
-        continue;
+  let treeScrollKey = "";
+  function renderGameTree(state, hide) {
+    const inner = $("gt-inner");
+    const laneW = inner.clientWidth - LANE_LEFT - WR_COL;
+    if (laneW < 40) return;  // left panel hidden
+    const line = state.nodes, index = state.index, current = line[index];
+    // Black's win rate after the move; while playing, not for the position on the board
+    const wrOf = (n) => (n.analysis && !(hide && n === current) ? n.analysis.blackWinrate : null);
+    const X = (wr) => LANE_PAD + wr * (laneW - 2 * LANE_PAD);
+    const Y = (i) => (i === 0 ? 0 : (i - 0.5) * ROW);
+    const wrs = line.map(wrOf);
+    let last = wrs[0] === null ? 0.5 : wrs[0];
+    const pts = wrs.map((w, i) => { if (w !== null) last = w; return [X(last), Y(i)]; });
+    // win rate the mover gave away (> 0 = worse for the player who moved)
+    const lost = (i) => (wrs[i] === null || wrs[i - 1] === null ? 0
+      : line[i].move.color === Go.BLACK ? wrs[i - 1] - wrs[i] : wrs[i] - wrs[i - 1]);
+
+    // every variation leaving the line, followed along its remembered line
+    const ghosts = [];
+    let rows = line.length - 1;
+    for (let i = 0; i < line.length - 1; i++) {
+      for (const alt of line[i].children) {
+        if (alt === line[i + 1]) continue;
+        const path = [line[i]];
+        for (let a = alt; a; a = a.next || a.children[0]) path.push(a);
+        ghosts.push({ from: i, path });
+        rows = Math.max(rows, i + path.length - 1);
       }
-      const black = n.move.color === Go.BLACK;
-      const label = `${it.col} · ${black ? "B" : "W"} ${moveLabel(n.move, state.size)}`;
-      const dim = onLine.has(n) ? "" : ` opacity="0.75"`;
-      o.push(`<g data-node="${n.id}"${dim}><title>${label}</title>` +
-        `<circle cx="${x}" cy="${y}" r="${TREE_R}" fill="${black ? "var(--stone-black)" : "var(--stone-white)"}" stroke="${black ? "var(--stone-black)" : "var(--stone-white-edge)"}" stroke-width="1"/>` +
-        `<text x="${x}" y="${y + 3.2}" font-size="${it.col >= 100 ? 7.5 : 9}" text-anchor="middle" fill="${black ? "var(--stone-white)" : "var(--stone-black)"}" font-family="var(--mono)">${n.move.vertex ? it.col : "P"}</text></g>`);
     }
-    const svg = wrap.querySelector("svg") || wrap.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"));
-    svg.setAttribute("width", w);
-    svg.setAttribute("height", h);
-    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-    svg.innerHTML = o.join("");
-    wrap._nodes = new Map(items.map((it) => [String(it.node.id), it.node]));
+    const H = rows * ROW + 8;
+
+    const o = [`<line class="mid" x1="${X(0.5)}" y1="0" x2="${X(0.5)}" y2="${H}"/>`];
+    // shade between the curve and 50 %, over each run of analysed moves
+    for (let i = 0; i < line.length;) {
+      let j = i;
+      while (j < line.length && wrs[j] !== null) j++;
+      if (j - i > 1) {
+        const run = pts.slice(i, j);
+        o.push(`<path class="tint" d="${smooth(run)} L${X(0.5)},${run[run.length - 1][1]} L${X(0.5)},${run[0][1]} Z"/>`);
+      }
+      i = j + 1;
+    }
+
+    ghosts.forEach((g, k) => {
+      let lk = pts[g.from][0];
+      const gp = g.path.map((n, j) => {
+        const w = j ? wrOf(n) : null;
+        if (w !== null) lk = X(w);
+        return [lk, Y(g.from + j)];
+      });
+      const d = smooth(gp), tip = gp[gp.length - 1], end = g.from + g.path.length - 1, alt = g.path[1].move;
+      const label = `${alt.color === Go.BLACK ? "B" : "W"} ${moveLabel(alt, state.size)} … ${end}`;
+      const right = tip[0] >= pts[Math.min(end, pts.length - 1)][0];  // label on the side away from the line
+      o.push(`<g class="ghost" data-ghost="${k}"><title>${label} (${g.path.length - 1} moves)</title><path class="hit" d="${d}"/><path class="vine" d="${d}"/>`);
+      gp.forEach((p, j) => { if (j) o.push(`<circle class="${g.path[j].move.color === Go.BLACK ? "stone-b" : "stone-w"}" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.6"/>`); });
+      o.push(`<text x="${(tip[0] + (right ? 8 : -8)).toFixed(1)}" y="${(tip[1] + 14).toFixed(1)}" text-anchor="${right ? "start" : "end"}">${label}</text></g>`);
+    });
+
+    // the line: solid between analysed moves, dotted where analysis is missing
+    for (let i = 0; i < line.length - 1;) {
+      const solid = wrs[i + 1] !== null && (i === 0 || wrs[i] !== null);
+      let j = i + 1;
+      while (j < line.length - 1 && (wrs[j + 1] !== null && wrs[j] !== null) === solid) j++;
+      o.push(`<path class="trunk${solid ? "" : " pending"}" d="${smooth(pts.slice(i, j + 1))}"/>`);
+      i = j;
+    }
+    for (let i = 1; i < line.length; i++) {
+      const [x, y] = pts[i], r = i === index ? 5.5 : 4;
+      const cls = wrs[i] === null ? "hollow" : line[i].move.color === Go.BLACK ? "stone-b" : "stone-w";
+      if (lost(i) > 0.1) o.push(`<circle class="swing" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r + 3}"/>`);
+      o.push(`<circle class="${cls}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}"/>`);
+      if (i === index) o.push(`<circle class="now" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r + 3.5}"/>`);
+    }
+
+    const html = [`<svg class="gt-lane" width="${laneW}" height="${H}" viewBox="0 0 ${laneW} ${H}">${o.join("")}</svg>`];
+    for (let i = 1; i <= rows; i++) {
+      const n = line[i];
+      if (!n) { html.push(`<div class="gt-row spacer"></div>`); continue; }  // a side curve runs on
+      const l = lost(i);
+      const delta = l > 0.05 ? `<span class="d${l > 0.1 ? " bad" : ""}">−${Math.round(l * 100)}</span>` : "";
+      const cls = ["gt-row", i === index && "current", n.parent.children.length > 1 && "branch", wrs[i] === null && "pending"].filter(Boolean).join(" ");
+      html.push(`<div class="${cls}" data-num="${i}"><span class="num">${i}</span><span>${n.move.color === Go.BLACK ? "B" : "W"} ${moveLabel(n.move, state.size)}</span><span></span>` +
+        `<span class="wr">${wrs[i] === null ? "—" : Math.round(wrs[i] * 100)}${delta}</span></div>`);
+    }
+    inner.innerHTML = html.join("");
+    inner.style.height = H + "px";
+    inner._ghosts = ghosts;
+    inner._index = index;
 
     // keep the current move in view (only when it changed, so manual scrolling sticks)
-    if (moved) {
-      const cur = items.find((it) => it.node === node);
-      const cx = X(cur.col), cy = Y(cur.row), m = TREE_CELL * 1.5;
-      if (cx - m < wrap.scrollLeft || cx + m > wrap.scrollLeft + wrap.clientWidth) wrap.scrollLeft = cx - wrap.clientWidth / 2;
-      if (cy - m < wrap.scrollTop || cy + m > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = cy - wrap.clientHeight / 2;
+    const key = `${current.id}|${line.length}`;
+    if (key !== treeScrollKey) {
+      treeScrollKey = key;
+      const box = $("game-tree"), top = (index - 1) * ROW, h = box.clientHeight;
+      if (top < box.scrollTop + 30 || top > box.scrollTop + h - 60) box.scrollTop = top - h / 2;
     }
-  }
-
-  function renderGraph(state, hide) {
-    const svg = $("winrate-graph");
-    const w = Math.max(200, svg.clientWidth), h = Math.max(48, svg.clientHeight || 72);
-    const padL = 8, padR = 8, padT = 10, padB = 24;
-    const n = Math.max(1, state.nodes.length - 1);
-    const vals = state.nodes.map((nd) => (nd.analysis && !(hide && nd === state.nodes[state.index]) ? nd.analysis.blackWinrate * 100 : null));
-    const known = vals.filter((v) => v !== null);
-    const spread = Math.max(6, ...known.map((v) => Math.abs(v - 50) * 1.25));
-    const lo = 50 - spread, hi = 50 + spread;
-    const X = (i) => padL + (w - padL - padR) * i / n;
-    const Y = (v) => padT + (h - padT - padB) * (hi - v) / (hi - lo);
-    const o = [`<line x1="${padL}" y1="${Y(50).toFixed(1)}" x2="${w - padR}" y2="${Y(50).toFixed(1)}" stroke="var(--muted)" stroke-opacity="0.5"/>`];
-    // one polyline per run of analysed moves
-    let run = [];
-    const flush = () => {
-      if (run.length > 1) {
-        const pts = run.map(([i, v]) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
-        o.push(`<path d="M${X(run[0][0]).toFixed(1)},${Y(50).toFixed(1)} L${pts.replace(/ /g, " L")} L${X(run[run.length - 1][0]).toFixed(1)},${Y(50).toFixed(1)} Z" fill="var(--ink)" fill-opacity="0.07"/>`);
-        o.push(`<polyline points="${pts}" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>`);
-      }
-      run = [];
-    };
-    vals.forEach((v, i) => (v === null ? flush() : run.push([i, v])));
-    flush();
-    const step = Math.ceil(n / 20);
-    for (let i = 0; i <= n; i += step) {
-      o.push(`<line x1="${X(i).toFixed(1)}" y1="${h - padB + 4}" x2="${X(i).toFixed(1)}" y2="${h - padB + 8}" stroke="var(--muted)"/>`);
-      o.push(`<text x="${X(i).toFixed(1)}" y="${h - 6}" font-size="11" text-anchor="middle" fill="var(--muted)" font-family="var(--mono)">${i}</text>`);
-    }
-    const cx = X(state.index);
-    o.push(`<line x1="${cx.toFixed(1)}" y1="${padT - 4}" x2="${cx.toFixed(1)}" y2="${h - padB}" stroke="var(--accent)" stroke-width="1.5"/>`);
-    if (vals[state.index] !== null) o.push(`<circle cx="${cx.toFixed(1)}" cy="${Y(vals[state.index]).toFixed(1)}" r="4" fill="var(--accent)"/>`);
-    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-    svg.innerHTML = o.join("");
-    svg._graph = { padL, padR, n, w };
+    const here = movesAt(state.root, index);
+    $("gt-status").innerHTML = `<b>${index}</b> / ${line.length - 1}` +
+      (here.length > 1 ? ` · move <b>${here.indexOf(current) + 1}</b> of ${here.length} here` : "");
   }
 
   function renderEngineLine(state) {
@@ -346,5 +319,5 @@
     return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
 
-  root.Panels = { init, render, renderBoard, leadLabel };
+  root.Panels = { init, render, renderBoard, leadLabel, movesAt };
 })(this);
